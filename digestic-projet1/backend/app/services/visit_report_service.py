@@ -3,16 +3,20 @@ from app.models.visit_report import VisitReport
 from app.repositories.visit_report_repository import VisitReportRepository
 from app.repositories.delivery_note_repository import DeliveryNoteRepository
 from app.repositories.visit_repository import VisitRepository
+from app.repositories.pharmacy_repository import PharmacyRepository
 
 class VisitReportService:
     """Service pour la gestion des rapports de visite"""
     
     def __init__(self, visit_report_repo: VisitReportRepository, 
                  delivery_note_repo: DeliveryNoteRepository,
-                 visit_repo: VisitRepository):
+                 visit_repo: VisitRepository,
+                 pharmacy_repo: PharmacyRepository,
+                 ):
         self.visit_report_repo = visit_report_repo
         self.delivery_note_repo = delivery_note_repo
         self.visit_repo = visit_repo
+        self.pharmacy_repo = pharmacy_repo
     
     def get_all_reports(self) -> List[VisitReport]:
         """Récupère tous les rapports"""
@@ -33,21 +37,33 @@ class VisitReportService:
                 report_data['bottles_deposited'] = int(report_data['bottles_deposited'])
             except (ValueError, TypeError):
                 report_data['bottles_deposited'] = 0
-        
+
+        if report_data.get('has_deposit') and report_data.get('bottles_deposited', 0) > 0:
+            if not report_data.get('payment_mode'):
+                pharmacy = self.pharmacy_repo.find_by_id(report_data.get('pharmacy_id'))
+                if pharmacy and pharmacy.payment_mode:
+                    report_data['payment_mode'] = pharmacy.payment_mode
+                else:
+                    report_data['payment_mode'] = 'encaissement sous 30 jours'
+
         report = VisitReport.from_dict(report_data)
-        
-        # Si dépôt, créer automatiquement un bon de livraison
-        if report.has_deposit and report.bottles_deposited > 0:
-            self._create_delivery_note(report)
-        
-        # Marquer la visite comme complétée
-        if report.visit_id:
-            visit = self.visit_repo.find_by_id(report.visit_id)
+        saved = self.visit_report_repo.create(report)
+
+        # Après persistance (FK `deposits.visit_report_id` vers `visit_reports`)
+        if (
+            saved.has_deposit
+            and saved.bottles_deposited > 0
+            and saved.payment_mode == "dépôt-vente"
+        ):
+            self._create_delivery_note(saved)
+
+        if saved.visit_id:
+            visit = self.visit_repo.find_by_id(saved.visit_id)
             if visit:
-                visit.status = 'completed'
+                visit.status = "completed"
                 self.visit_repo.update(visit.id, visit)
-        
-        return self.visit_report_repo.create(report)
+
+        return saved
     
     def _create_delivery_note(self, report: VisitReport):
         """Crée un bon de livraison à partir d'un rapport"""
@@ -59,7 +75,9 @@ class VisitReportService:
             'commercial_id': report.commercial_id,
             'delivery_date': report.visit_date,
             'bottles_count': report.bottles_deposited,
-            'is_deposit_sale': report.delivery_mode == 'deposit_sale'
+            'is_deposit_sale': report.payment_mode == 'dépôt-vente',
+            'status': 'pending',
+            'email_sent': False,
         }
         delivery_note = self.delivery_note_repo._model_from_dict(delivery_note_data)
         self.delivery_note_repo.create(delivery_note)
@@ -83,6 +101,12 @@ class VisitReportService:
     def get_unsynced_reports(self) -> List[VisitReport]:
         """Récupère les rapports non synchronisés (mode offline)"""
         return self.visit_report_repo.find_unsynced()
+
+    def get_reports_by_commercial(self, commercial_id: str) -> List[VisitReport]:
+        return self.visit_report_repo.find_by_commercial(commercial_id)
+
+    def get_reports_by_pharmacy(self, pharmacy_id: str) -> List[VisitReport]:
+        return self.visit_report_repo.find_by_pharmacy(pharmacy_id)
     
     def sync_reports(self) -> int:
         """Synchronise tous les rapports non synchronisés"""

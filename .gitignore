@@ -1,3 +1,13 @@
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
 # Python
 __pycache__/
 *.py[cod]
@@ -27,19 +37,11 @@ wheels/
 instance/
 .webassets-cache
 
+# Secrets
+.env
+.env.local
+
 # Data files
 data/
 *.db
 *.sqlite
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-

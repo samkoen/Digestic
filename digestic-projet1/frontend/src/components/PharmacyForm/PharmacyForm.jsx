@@ -8,7 +8,15 @@ import {
   TextField,
   Grid,
   MenuItem,
+  InputAdornment,
+  IconButton,
+  Avatar,
+  Tooltip,
+  Box,
 } from '@mui/material'
+import ClearIcon from '@mui/icons-material/Clear'
+import { PAYMENT_MODES, DEFAULT_PAYMENT_MODE } from '../../constants/paymentModes'
+import { PHARMACY_STATUS_OPTIONS, getPharmacyStatusLabel } from '../../constants/pharmacyStatus'
 import { pharmacyService } from '../../services/pharmacyService'
 import { userService } from '../../services/userService'
 
@@ -22,8 +30,10 @@ function PharmacyForm({ open, onClose, pharmacy }) {
     pharmacist_email: '',
     pharmacist_phone: '',
     rib: '',
-    classification: 'C',
     commercial_id: '',
+    photo_url: '',
+    payment_mode: DEFAULT_PAYMENT_MODE,
+    status: 'actif',
   })
   const [loading, setLoading] = useState(false)
   const [commercials, setCommercials] = useState([])
@@ -45,8 +55,10 @@ function PharmacyForm({ open, onClose, pharmacy }) {
         pharmacist_email: pharmacy.pharmacist_email || '',
         pharmacist_phone: pharmacy.pharmacist_phone || '',
         rib: pharmacy.rib || '',
-        classification: pharmacy.classification || 'C',
         commercial_id: pharmacy.commercial_id || '',
+        photo_url: pharmacy.photo_url || '',
+        payment_mode: pharmacy.payment_mode || DEFAULT_PAYMENT_MODE,
+        status: pharmacy.status || 'actif',
       })
     } else {
       setFormData({
@@ -58,8 +70,10 @@ function PharmacyForm({ open, onClose, pharmacy }) {
         pharmacist_email: '',
         pharmacist_phone: '',
         rib: '',
-        classification: 'C',
         commercial_id: '',
+        photo_url: '',
+        payment_mode: DEFAULT_PAYMENT_MODE,
+        status: 'actif',
       })
     }
   }, [pharmacy, open])
@@ -81,6 +95,13 @@ function PharmacyForm({ open, onClose, pharmacy }) {
     }))
   }
 
+  const handleClearPhoto = () => {
+    setFormData((prev) => ({
+      ...prev,
+      photo_url: '',
+    }))
+  }
+
   const handleSubmit = async (e) => {
     e.preventDefault()
     try {
@@ -88,6 +109,7 @@ function PharmacyForm({ open, onClose, pharmacy }) {
       const data = {
         ...formData,
         commercial_id: formData.commercial_id || null,
+        photo_url: formData.photo_url || null,
       }
 
       if (pharmacy) {
@@ -156,15 +178,39 @@ function PharmacyForm({ open, onClose, pharmacy }) {
               <TextField
                 fullWidth
                 select
-                required
-                label="Classification"
-                name="classification"
-                value={formData.classification}
+                label="Statut (Sage : TYPE)"
+                name="status"
+                value={formData.status || 'actif'}
+                onChange={handleChange}
+                helperText="Valeurs usuelles : actif, stand by, désactivé (autre libre si besoin)"
+              >
+                {PHARMACY_STATUS_OPTIONS.map((o) => (
+                  <MenuItem key={o.value} value={o.value}>
+                    {o.label}
+                  </MenuItem>
+                ))}
+                {formData.status &&
+                  !PHARMACY_STATUS_OPTIONS.some((o) => o.value === formData.status) && (
+                    <MenuItem value={formData.status}>
+                      {getPharmacyStatusLabel(formData.status)} ({formData.status})
+                    </MenuItem>
+                  )}
+              </TextField>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                select
+                label="Mode de paiement (dépôt)"
+                name="payment_mode"
+                value={formData.payment_mode}
                 onChange={handleChange}
               >
-                <MenuItem value="A">A</MenuItem>
-                <MenuItem value="B">B</MenuItem>
-                <MenuItem value="C">C</MenuItem>
+                {PAYMENT_MODES.map((mode) => (
+                  <MenuItem key={mode} value={mode}>
+                    {mode}
+                  </MenuItem>
+                ))}
               </TextField>
             </Grid>
             <Grid item xs={12} sm={6}>
@@ -211,6 +257,45 @@ function PharmacyForm({ open, onClose, pharmacy }) {
                 value={formData.pharmacist_phone}
                 onChange={handleChange}
               />
+            </Grid>
+            <Grid item xs={12}>
+              <Box
+                display="flex"
+                alignItems="center"
+                gap={2}
+                sx={{ flexWrap: 'wrap' }}
+              >
+                <TextField
+                  fullWidth
+                  label="URL de la photo"
+                  name="photo_url"
+                  value={formData.photo_url}
+                  onChange={handleChange}
+                  InputProps={{
+                    endAdornment: (
+                      <InputAdornment position="end">
+                        <IconButton
+                          edge="end"
+                          aria-label="Effacer l'URL de la photo"
+                          onClick={handleClearPhoto}
+                          disabled={!formData.photo_url}
+                        >
+                          <ClearIcon fontSize="small" />
+                        </IconButton>
+                      </InputAdornment>
+                    ),
+                  }}
+                />
+                {formData.photo_url && (
+                  <Tooltip title="Aperçu de la photo">
+                    <Avatar
+                      src={formData.photo_url}
+                      alt="Aperçu photo"
+                      sx={{ width: 56, height: 56, border: '1px solid', borderColor: 'divider' }}
+                    />
+                  </Tooltip>
+                )}
+              </Box>
             </Grid>
             <Grid item xs={12}>
               <TextField

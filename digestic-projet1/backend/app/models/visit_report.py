@@ -23,6 +23,7 @@ class VisitReport:
     delivery_mode: str = "normal"  # normal, deposit_sale
     notes: Optional[str] = None
     synced: bool = False  # Pour le mode offline
+    payment_mode: str = "encaissement sous 30 jours"
     created_at: str = None
     updated_at: str = None
     

@@ -10,15 +10,20 @@ class Pharmacy:
     address: str
     city: str
     postal_code: str
+    warehouse_id: str | None = None  # requis côté PostgreSQL, exposé API
+    country: str | None = None
+    email: str | None = None  # email principal pharmacie (API)
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     pharmacist_name: Optional[str] = None
     pharmacist_email: Optional[str] = None
     pharmacist_phone: Optional[str] = None
     rib: Optional[str] = None  # RIB (Relevé d'Identité Bancaire)
-    classification: str = "C"  # A, B, C ou urbaine, rurale
+    status: str = "actif"  # actif, desactive, standby, autre, … (Sage TYPE / règles métier)
     commercial_id: Optional[str] = None  # ID du commercial assigné
     next_visit_date: Optional[str] = None  # Date de la prochaine visite (ISO format)
+    photo_url: Optional[str] = None
+    payment_mode: str = "encaissement sous 30 jours"
     created_at: str = None
     updated_at: str = None
     
@@ -37,10 +42,22 @@ class Pharmacy:
         """Crée un objet Pharmacy à partir d'un dictionnaire"""
         # Filtrer les champs valides pour éviter les erreurs
         valid_fields = {
-            'id', 'name', 'address', 'city', 'postal_code', 'latitude', 
-            'longitude', 'pharmacist_name', 'pharmacist_email', 'pharmacist_phone',
-            'rib', 'classification', 'commercial_id', 'next_visit_date', 'created_at', 'updated_at'
+            'id', 'name', 'address', 'city', 'postal_code', 'warehouse_id', 'country', 'email',
+            'latitude', 'longitude', 'pharmacist_name', 'pharmacist_email', 'pharmacist_phone',
+            'rib', 'status', 'commercial_id', 'next_visit_date', 'photo_url', 'payment_mode',
+            'created_at', 'updated_at'
         }
         filtered_data = {k: v for k, v in data.items() if k in valid_fields}
+        if "status" in filtered_data and (filtered_data["status"] is None or filtered_data["status"] == ""):
+            del filtered_data["status"]
+        # Ancien booléen API
+        if "status" not in filtered_data and "active" in data:
+            a = data.get("active")
+            if a is False or (isinstance(a, str) and a.strip().lower() in ("false", "0", "non", "no")):
+                filtered_data["status"] = "desactive"
+            elif a is True or a in (None,):
+                filtered_data["status"] = "actif"
+        if "status" in filtered_data and isinstance(filtered_data["status"], str):
+            filtered_data["status"] = filtered_data["status"].strip().lower()[:32] or "actif"
         return cls(**filtered_data)
 

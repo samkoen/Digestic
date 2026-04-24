@@ -1,29 +1,117 @@
-from app.repositories.base_repository import BaseRepository
+import uuid
+from typing import Optional
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+import app.db.models as orm
+from app.db import mappers as mp
 from app.models.visit_report import VisitReport
 
-class VisitReportRepository(BaseRepository[VisitReport]):
-    """Repository pour gérer les rapports de visite"""
-    
-    def __init__(self, data_dir: str):
-        super().__init__(data_dir, 'visit_reports.json')
-    
-    def _model_from_dict(self, data: dict) -> VisitReport:
-        return VisitReport.from_dict(data)
-    
-    def _model_to_dict(self, model: VisitReport) -> dict:
-        return model.to_dict()
-    
+
+class VisitReportRepository:
+    def __init__(self, db: Session):
+        self._db = db
+
+    def find_all(self) -> list[VisitReport]:
+        rows = self._db.execute(select(orm.VisitReport)).scalars().all()
+        return [mp.report_orm_to_domain(r) for r in rows]
+
+    def find_by_id(self, id_: str) -> Optional[VisitReport]:
+        try:
+            rid = mp.parse_uuid(id_)
+        except ValueError:
+            return None
+        row = self._db.get(orm.VisitReport, rid)
+        return mp.report_orm_to_domain(row) if row else None
+
+    def find_by(self, **kwargs) -> list[VisitReport]:
+        q = select(orm.VisitReport)
+        for k, v in kwargs.items():
+            if k in ("pharmacy_id", "commercial_id", "visit_id") and v is not None:
+                v = mp.parse_uuid(v)
+            q = q.where(getattr(orm.VisitReport, k) == v)
+        rows = self._db.execute(q).scalars().all()
+        return [mp.report_orm_to_domain(r) for r in rows]
+
     def find_by_commercial(self, commercial_id: str) -> list[VisitReport]:
-        """Trouve les rapports d'un commercial"""
         return self.find_by(commercial_id=commercial_id)
-    
+
     def find_by_pharmacy(self, pharmacy_id: str) -> list[VisitReport]:
-        """Trouve les rapports d'une pharmacie"""
         return self.find_by(pharmacy_id=pharmacy_id)
-    
+
     def find_unsynced(self) -> list[VisitReport]:
-        """Trouve les rapports non synchronisés (mode offline)"""
-        all_reports = self.find_all()
-        return [report for report in all_reports if not report.synced]
+        q = select(orm.VisitReport).where(orm.VisitReport.synced.is_(False))
+        rows = self._db.execute(q).scalars().all()
+        return [mp.report_orm_to_domain(r) for r in rows]
 
+    def create(self, model: VisitReport) -> VisitReport:
+        nvd = mp.parse_date(model.next_visit_date) if model.next_visit_date else None
+        _vid = (getattr(model, "visit_id", None) or "").strip()
+        row = orm.VisitReport(
+            id=mp.parse_uuid(model.id) if model.id else uuid.uuid4(),
+            visit_id=mp.parse_uuid(_vid) if _vid else None,
+            pharmacy_id=mp.parse_uuid(model.pharmacy_id),
+            commercial_id=mp.parse_uuid(model.commercial_id),
+            visit_date=mp.parse_date(model.visit_date),
+            visit_status=model.visit_status,
+            visit_not_completed_reason=model.visit_not_completed_reason,
+            has_deposit=model.has_deposit,
+            bottles_deposited=model.bottles_deposited,
+            free_units=model.free_units,
+            stock_status=model.stock_status,
+            display_stand_status=model.display_stand_status,
+            covering_status=model.covering_status,
+            covering_size_to_order=model.covering_size_to_order,
+            next_visit_date=nvd,
+            delivery_mode=model.delivery_mode,
+            payment_mode=model.payment_mode,
+            notes=model.notes,
+            synced=model.synced,
+        )
+        self._db.add(row)
+        self._db.flush()
+        return mp.report_orm_to_domain(row)
 
+    def update(self, id_: str, model: VisitReport) -> Optional[VisitReport]:
+        try:
+            rid = mp.parse_uuid(id_)
+        except ValueError:
+            return None
+        row = self._db.get(orm.VisitReport, rid)
+        if not row:
+            return None
+        if model.visit_id:
+            row.visit_id = mp.parse_uuid(model.visit_id)
+        row.pharmacy_id = mp.parse_uuid(model.pharmacy_id)
+        row.commercial_id = mp.parse_uuid(model.commercial_id)
+        row.visit_date = mp.parse_date(model.visit_date)
+        row.visit_status = model.visit_status
+        row.visit_not_completed_reason = model.visit_not_completed_reason
+        row.has_deposit = model.has_deposit
+        row.bottles_deposited = model.bottles_deposited
+        row.free_units = model.free_units
+        row.stock_status = model.stock_status
+        row.display_stand_status = model.display_stand_status
+        row.covering_status = model.covering_status
+        row.covering_size_to_order = model.covering_size_to_order
+        row.next_visit_date = (
+            mp.parse_date(model.next_visit_date) if model.next_visit_date else None
+        )
+        row.delivery_mode = model.delivery_mode
+        row.payment_mode = model.payment_mode
+        row.notes = model.notes
+        row.synced = model.synced
+        self._db.flush()
+        return mp.report_orm_to_domain(row)
+
+    def delete(self, id_: str) -> bool:
+        try:
+            rid = mp.parse_uuid(id_)
+        except ValueError:
+            return False
+        row = self._db.get(orm.VisitReport, rid)
+        if not row:
+            return False
+        self._db.delete(row)
+        return True

@@ -1,9 +1,8 @@
 import api from './api'
 
 export const pharmacyService = {
-  getAll: async (classification = null) => {
-    const params = classification ? { classification } : {}
-    const response = await api.get('/pharmacies', { params })
+  getAll: async () => {
+    const response = await api.get('/pharmacies')
     return response.data
   },
 

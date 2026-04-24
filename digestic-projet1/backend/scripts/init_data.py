@@ -6,6 +6,7 @@ des visites, rapports de visite, factures et bons de livraison
 import json
 import os
 import uuid
+import re
 from datetime import datetime, timedelta
 import random
 
@@ -130,6 +131,18 @@ MARSEILLE_COORDS = [
 # Noms de pharmaciens fictifs
 PHARMACIST_FIRST_NAMES = ["Jean", "Marie", "Pierre", "Sophie", "Luc", "Claire", "Antoine", "Julie", "Thomas", "Camille"]
 PHARMACIST_LAST_NAMES = ["Martin", "Bernard", "Dubois", "Thomas", "Robert", "Petit", "Durand", "Leroy", "Moreau", "Simon"]
+PAYMENT_MODES = [
+    "encaissement sous 30 jours",
+    "dépôt-vente",
+    "encaissement sous 60 jours",
+]
+
+def build_photo_url(name: str) -> str:
+    """Construit une URL de photo via Picsum en utilisant le nom comme seed"""
+    seed = re.sub(r'[^a-z0-9]', '', name.lower())
+    seed = seed or 'pharmacie'
+    return f"https://picsum.photos/seed/{seed}/800/600"
+
 
 def generate_users():
     """Génère les utilisateurs commerciaux et admin"""
@@ -202,9 +215,6 @@ def generate_pharmacies(users):
         first_name = PHARMACIST_FIRST_NAMES[i % len(PHARMACIST_FIRST_NAMES)]
         last_name = PHARMACIST_LAST_NAMES[i % len(PHARMACIST_LAST_NAMES)]
         
-        # Classification aléatoire (plus de A à Paris)
-        classification = "A" if i < 8 else ("B" if i < 18 else "C")
-        
         # Répartition: Odelia pour les 12 premières, Camille pour les 13 suivantes
         commercial_id = odelia_id if i < 12 else camille_id
         
@@ -219,8 +229,10 @@ def generate_pharmacies(users):
             "pharmacist_name": f"{first_name} {last_name}",
             "pharmacist_email": f"{first_name.lower()}.{last_name.lower()}@{name.lower().replace(' ', '').replace('-', '')}.fr",
             "pharmacist_phone": f"01{40 + i:02d}{i*1000:04d}",
-            "classification": classification,
             "commercial_id": commercial_id,  # Ajout du commercial assigné
+            "photo_url": build_photo_url(name),
+            "payment_mode": random.choice(PAYMENT_MODES),
+            "status": "actif",
             "created_at": now,
             "updated_at": now
         }
@@ -233,9 +245,7 @@ def generate_pharmacies(users):
         first_name = PHARMACIST_FIRST_NAMES[i % len(PHARMACIST_FIRST_NAMES)]
         last_name = PHARMACIST_LAST_NAMES[i % len(PHARMACIST_LAST_NAMES)]
         
-        # Classification aléatoire
-        classification = "A" if i < 5 else ("B" if i < 15 else "C")
-        
+        photo_url = build_photo_url(name)
         pharmacy = {
             "id": str(uuid.uuid4()),
             "name": name,
@@ -247,8 +257,10 @@ def generate_pharmacies(users):
             "pharmacist_name": f"{first_name} {last_name}",
             "pharmacist_email": f"{first_name.lower()}.{last_name.lower()}@{name.lower().replace(' ', '').replace('-', '')}.fr",
             "pharmacist_phone": f"04{91 + i:02d}{i*1000:04d}",
-            "classification": classification,
             "commercial_id": aaron_id,  # Toutes les pharmacies de Marseille à Aaron
+            "photo_url": photo_url,
+            "payment_mode": random.choice(PAYMENT_MODES),
+            "status": "actif",
             "created_at": now,
             "updated_at": now
         }
@@ -328,8 +340,8 @@ def generate_visit_reports(visits, pharmacies):
             "covering_status": random.choice(covering_statuses),
             "covering_size_to_order": random.choice(covering_sizes) if random.random() < 0.3 else None,
             "next_visit_date": next_visit_date.isoformat(),
-            "delivery_mode": "deposit_sale" if random.random() < 0.2 else "normal",
             "notes": f"Visite productive. {random.choice(['Client satisfait', 'Demande de réassort', 'Nouveau contact', 'Suivi nécessaire'])}",
+            "payment_mode": pharmacy.get("payment_mode") or PAYMENT_MODES[0],
             "synced": True,
             "created_at": visit_date.isoformat(),
             "updated_at": visit_date.isoformat()

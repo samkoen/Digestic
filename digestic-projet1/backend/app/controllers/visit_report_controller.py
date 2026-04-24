@@ -1,89 +1,93 @@
-from flask import Blueprint, request, jsonify
-from app.services.visit_report_service import VisitReportService
-from app.repositories.visit_report_repository import VisitReportRepository
+from typing import Any
+
+from fastapi import APIRouter, Depends
+from fastapi.responses import JSONResponse
+from sqlalchemy.orm import Session
+
+from app.dependencies import get_db
 from app.repositories.delivery_note_repository import DeliveryNoteRepository
+from app.repositories.pharmacy_repository import PharmacyRepository
+from app.repositories.visit_report_repository import VisitReportRepository
 from app.repositories.visit_repository import VisitRepository
+from app.services.visit_report_service import VisitReportService
 
-visit_report_bp = Blueprint('visit_report', __name__)
+router = APIRouter()
 
-def get_visit_report_service():
-    from flask import current_app
-    data_dir = current_app.config.get('DATA_DIR', 'data')
-    visit_report_repo = VisitReportRepository(data_dir)
-    delivery_note_repo = DeliveryNoteRepository(data_dir)
-    visit_repo = VisitRepository(data_dir)
-    return VisitReportService(visit_report_repo, delivery_note_repo, visit_repo)
 
-@visit_report_bp.route('', methods=['GET'])
-def get_visit_reports():
-    """Récupère tous les rapports de visite"""
+def get_visit_report_service(db: Session = Depends(get_db)) -> VisitReportService:
+    return VisitReportService(
+        VisitReportRepository(db),
+        DeliveryNoteRepository(db),
+        VisitRepository(db),
+        PharmacyRepository(db),
+    )
+
+
+@router.get("")
+def get_visit_reports(
+    commercial_id: str | None = None,
+    pharmacy_id: str | None = None,
+    service: VisitReportService = Depends(get_visit_report_service),
+):
     try:
-        service = get_visit_report_service()
-        commercial_id = request.args.get('commercial_id')
-        pharmacy_id = request.args.get('pharmacy_id')
-        unsynced = request.args.get('unsynced', 'false').lower() == 'true'
-        
-        if unsynced:
-            reports = service.get_unsynced_reports()
-        elif commercial_id:
-            reports = service.visit_report_repo.find_by_commercial(commercial_id)
+        if commercial_id:
+            reports = service.get_reports_by_commercial(commercial_id)
         elif pharmacy_id:
-            reports = service.visit_report_repo.find_by_pharmacy(pharmacy_id)
+            reports = service.get_reports_by_pharmacy(pharmacy_id)
         else:
             reports = service.get_all_reports()
-        
-        return jsonify([report.to_dict() for report in reports]), 200
+        return [report.to_dict() for report in reports]
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return JSONResponse({"error": str(e)}, status_code=500)
 
-@visit_report_bp.route('/<report_id>', methods=['GET'])
-def get_visit_report(report_id):
-    """Récupère un rapport de visite par son ID"""
-    try:
-        service = get_visit_report_service()
-        report = service.get_report_by_id(report_id)
-        
-        if not report:
-            return jsonify({'error': 'Rapport non trouvé'}), 404
-        
-        return jsonify(report.to_dict()), 200
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
 
-@visit_report_bp.route('', methods=['POST'])
-def create_visit_report():
-    """Crée un nouveau rapport de visite"""
+@router.post("/sync", status_code=200)
+def sync_visit_reports(
+    service: VisitReportService = Depends(get_visit_report_service),
+):
     try:
-        data = request.get_json()
-        service = get_visit_report_service()
-        report = service.create_report(data)
-        return jsonify(report.to_dict()), 201
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
-
-@visit_report_bp.route('/<report_id>', methods=['PUT'])
-def update_visit_report(report_id):
-    """Met à jour un rapport de visite"""
-    try:
-        data = request.get_json()
-        service = get_visit_report_service()
-        report = service.update_report(report_id, data)
-        
-        if not report:
-            return jsonify({'error': 'Rapport non trouvé'}), 404
-        
-        return jsonify(report.to_dict()), 200
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
-
-@visit_report_bp.route('/sync', methods=['POST'])
-def sync_reports():
-    """Synchronise les rapports non synchronisés"""
-    try:
-        service = get_visit_report_service()
         count = service.sync_reports()
-        return jsonify({'message': f'{count} rapports synchronisés'}), 200
+        return {"message": f"{count} rapports synchronisés", "count": count}
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
+@router.get("/{report_id}")
+def get_visit_report(
+    report_id: str,
+    service: VisitReportService = Depends(get_visit_report_service),
+):
+    try:
+        report = service.get_report_by_id(report_id)
+        if not report:
+            return JSONResponse({"error": "Rapport non trouvé"}, status_code=404)
+        return report.to_dict()
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@router.post("", status_code=201)
+def create_visit_report(
+    data: dict[str, Any],
+    service: VisitReportService = Depends(get_visit_report_service),
+):
+    try:
+        report = service.create_report(data)
+        return report.to_dict()
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@router.put("/{report_id}")
+def update_visit_report(
+    report_id: str,
+    data: dict[str, Any],
+    service: VisitReportService = Depends(get_visit_report_service),
+):
+    try:
+        report = service.update_report(report_id, data)
+        if not report:
+            return JSONResponse({"error": "Rapport non trouvé"}, status_code=404)
+        return report.to_dict()
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)

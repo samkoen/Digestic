@@ -22,6 +22,7 @@ import {
   DialogActions,
   TextField,
   InputAdornment,
+  Avatar,
 } from '@mui/material'
 import { format, startOfWeek, endOfWeek, eachDayOfInterval, isSameDay, parseISO } from 'date-fns'
 import { fr } from 'date-fns/locale'
@@ -201,6 +202,11 @@ function Planning() {
     } catch {
       return dateString
     }
+  }
+
+  const getPhotoPreviewUrl = (pharmacy, size = 64) => {
+    const seed = encodeURIComponent(pharmacy.id ?? pharmacy.name ?? 'pharmacy-photo')
+    return pharmacy.photo_url || `https://picsum.photos/seed/${seed}/${size}/${size}`
   }
 
   // Génère un itinéraire Google Maps pour toutes les pharmacies affichées
@@ -585,69 +591,78 @@ function Planning() {
                 cursor: 'pointer',
               }}
             >
-              <CardContent>
-                <Box display="flex" justifyContent="space-between" alignItems="start">
-                  <Box sx={{ flex: 1 }}>
-                    <Typography variant="h6" gutterBottom>
-                      {item.pharmacy.name}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      {formatTime(item.nextVisitDate)}
-                    </Typography>
-                    <Box sx={{ mt: 1.5, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                      <Box display="flex" alignItems="center" gap={0.5}>
-                        <Typography variant="caption" color="text.secondary">
-                          RIB:
-                        </Typography>
-                        <Chip
-                          label={item.hasRIB ? 'Oui' : 'Non'}
-                          color={item.hasRIB ? 'success' : 'warning'}
-                          size="small"
-                          sx={{ height: '20px', fontSize: '0.7rem' }}
+                <CardContent>
+                  <Box display="flex" justifyContent="space-between" alignItems="start" gap={1}>
+                    <Box display="flex" gap={1} alignItems="flex-start" sx={{ flex: 1 }}>
+                      <Tooltip title={`Photo de ${item.pharmacy.name}`}>
+                        <Avatar
+                          src={getPhotoPreviewUrl(item.pharmacy, 72)}
+                          alt={`Photo de ${item.pharmacy.name}`}
+                          sx={{ width: 64, height: 64 }}
                         />
-                      </Box>
-                      {item.lastReassortDate && (
-                        <>
-                          <Typography variant="caption" color="text.secondary">
-                            Dernier réassort: {format(new Date(item.lastReassortDate), 'dd/MM/yyyy')}
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            Quantité: {item.lastReassortQuantity} bouteilles
-                          </Typography>
-                        </>
-                      )}
-                      {!item.lastReassortDate && (
-                        <Typography variant="caption" color="text.secondary" sx={{ fontStyle: 'italic' }}>
-                          Aucun réassort enregistré
+                      </Tooltip>
+                      <Box sx={{ flex: 1 }}>
+                        <Typography variant="h6" gutterBottom>
+                          {item.pharmacy.name}
                         </Typography>
-                      )}
+                        <Typography variant="body2" color="text.secondary">
+                          {formatTime(item.nextVisitDate)}
+                        </Typography>
+                        <Box sx={{ mt: 1.5, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                          <Box display="flex" alignItems="center" gap={0.5}>
+                            <Typography variant="caption" color="text.secondary">
+                              RIB:
+                            </Typography>
+                            <Chip
+                              label={item.hasRIB ? 'Oui' : 'Non'}
+                              color={item.hasRIB ? 'success' : 'warning'}
+                              size="small"
+                              sx={{ height: '20px', fontSize: '0.7rem' }}
+                            />
+                          </Box>
+                          {item.lastReassortDate && (
+                            <>
+                              <Typography variant="caption" color="text.secondary">
+                                Dernier réassort: {format(new Date(item.lastReassortDate), 'dd/MM/yyyy')}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                Quantité: {item.lastReassortQuantity} bouteilles
+                              </Typography>
+                            </>
+                          )}
+                          {!item.lastReassortDate && (
+                            <Typography variant="caption" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+                              Aucun réassort enregistré
+                            </Typography>
+                          )}
+                        </Box>
+                      </Box>
+                    </Box>
+                    <Box display="flex" gap={0.5}>
+                      <Tooltip title="Replanifier la visite">
+                        <IconButton
+                          size="small"
+                          onClick={(e) => handleReplanifyClick(item, e)}
+                          color="primary"
+                        >
+                          <EventRepeatIcon />
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title="Voir les détails">
+                        <IconButton
+                          size="small"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handlePharmacyClick(item.pharmacy.id, 0)
+                          }}
+                        >
+                          <VisibilityIcon />
+                        </IconButton>
+                      </Tooltip>
                     </Box>
                   </Box>
-                  <Box display="flex" gap={0.5}>
-                    <Tooltip title="Replanifier la visite">
-                      <IconButton
-                        size="small"
-                        onClick={(e) => handleReplanifyClick(item, e)}
-                        color="primary"
-                      >
-                        <EventRepeatIcon />
-                      </IconButton>
-                    </Tooltip>
-                    <Tooltip title="Voir les détails">
-                      <IconButton
-                        size="small"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handlePharmacyClick(item.pharmacy.id, 0)
-                        }}
-                      >
-                        <VisibilityIcon />
-                      </IconButton>
-                    </Tooltip>
-                  </Box>
-                </Box>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
           </Grid>
         ))}
       </Grid>
@@ -696,8 +711,16 @@ function Planning() {
                     cursor: 'pointer',
                   }}
                 >
-                  <CardContent>
-                    <Box display="flex" justifyContent="space-between" alignItems="start">
+                <CardContent>
+                  <Box display="flex" justifyContent="space-between" alignItems="start" gap={1}>
+                    <Box display="flex" gap={1} alignItems="flex-start" sx={{ flex: 1 }}>
+                      <Tooltip title={`Photo de ${item.pharmacy.name}`}>
+                        <Avatar
+                          src={getPhotoPreviewUrl(item.pharmacy, 64)}
+                          alt={`Photo de ${item.pharmacy.name}`}
+                          sx={{ width: 56, height: 56 }}
+                        />
+                      </Tooltip>
                       <Box sx={{ flex: 1 }}>
                         <Typography variant="h6" gutterBottom>
                           {item.pharmacy.name}
@@ -734,6 +757,8 @@ function Planning() {
                           )}
                         </Box>
                       </Box>
+                    </Box>
+
                       <Box display="flex" gap={0.5}>
                         <Tooltip title="Replanifier la visite">
                           <IconButton
@@ -837,9 +862,18 @@ function Planning() {
                             }}
                           >
                             <Box sx={{ flex: 1 }}>
-                              <Typography variant="body2" fontWeight="medium">
-                                {formatTime(item.nextVisitDate)} - {item.pharmacy.name}
-                              </Typography>
+                              <Box display="flex" alignItems="center" gap={1}>
+                                <Tooltip title={`Photo de ${item.pharmacy.name}`}>
+                                  <Avatar
+                                    src={getPhotoPreviewUrl(item.pharmacy, 48)}
+                                    alt={`Photo de ${item.pharmacy.name}`}
+                                    sx={{ width: 40, height: 40 }}
+                                  />
+                                </Tooltip>
+                                <Typography variant="body2" fontWeight="medium">
+                                  {formatTime(item.nextVisitDate)} - {item.pharmacy.name}
+                                </Typography>
+                              </Box>
                               <Box sx={{ mt: 0.5, display: 'flex', flexDirection: 'column', gap: 0.25 }}>
                                 <Box display="flex" alignItems="center" gap={0.5}>
                                   <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.65rem' }}>

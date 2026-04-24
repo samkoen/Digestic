@@ -11,6 +11,7 @@ import Planning from './pages/Planning/Planning'
 import Invoices from './pages/Invoices/Invoices'
 import CommercialMaterials from './pages/CommercialMaterials/CommercialMaterials'
 import Users from './pages/Users/Users'
+import DeliveryNotes from './pages/DeliveryNotes/DeliveryNotes'
 import { authService } from './services/authService'
 
 function PrivateRoute({ children, adminOnly = false }) {
@@ -73,6 +74,7 @@ function App() {
                 <Route path="/planning" element={<Planning />} />
                 <Route path="/invoices" element={<Invoices />} />
                 <Route path="/materials" element={<CommercialMaterials />} />
+                <Route path="/delivery-notes" element={<DeliveryNotes />} />
                 <Route
                   path="/users"
                   element={

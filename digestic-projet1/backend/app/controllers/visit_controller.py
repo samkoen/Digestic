@@ -1,117 +1,114 @@
-from flask import Blueprint, request, jsonify
-from app.services.visit_service import VisitService
+from datetime import datetime
+from typing import Any
+
+from fastapi import APIRouter, Depends, Query
+from fastapi.responses import JSONResponse
+from sqlalchemy.orm import Session
+
+from app.dependencies import get_db
 from app.repositories.visit_repository import VisitRepository
+from app.services.visit_service import VisitService
 
-visit_bp = Blueprint('visit', __name__)
+router = APIRouter()
 
-def get_visit_service():
-    from flask import current_app
-    data_dir = current_app.config.get('DATA_DIR', 'data')
-    repository = VisitRepository(data_dir)
-    return VisitService(repository)
 
-@visit_bp.route('', methods=['GET'])
-def get_visits():
-    """Récupère toutes les visites"""
+def get_visit_service(db: Session = Depends(get_db)) -> VisitService:
+    return VisitService(VisitRepository(db))
+
+
+@router.get("")
+def get_visits(
+    commercial_id: str | None = None,
+    pharmacy_id: str | None = None,
+    status: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    service: VisitService = Depends(get_visit_service),
+):
     try:
-        from datetime import datetime
-        service = get_visit_service()
-        commercial_id = request.args.get('commercial_id')
-        pharmacy_id = request.args.get('pharmacy_id')
-        status = request.args.get('status')
-        start_date = request.args.get('start_date')
-        end_date = request.args.get('end_date')
-        
-        # Récupérer toutes les visites
         if commercial_id:
             visits = service.get_visits_by_commercial(commercial_id)
         elif pharmacy_id:
             visits = service.get_visits_by_pharmacy(pharmacy_id)
         else:
             visits = service.get_all_visits()
-        
-        # Filtrer par statut si fourni
         if status:
             visits = [v for v in visits if v.status == status]
-        
-        # Filtrer par date si fourni
         if start_date or end_date:
             filtered_visits = []
             for visit in visits:
                 if not visit.scheduled_date:
                     continue
-                
-                visit_date = datetime.fromisoformat(visit.scheduled_date.replace('Z', '+00:00'))
-                
+                visit_date = datetime.fromisoformat(
+                    visit.scheduled_date.replace("Z", "+00:00")
+                )
                 if start_date:
-                    start = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+                    start = datetime.fromisoformat(
+                        start_date.replace("Z", "+00:00")
+                    )
                     if visit_date < start:
                         continue
-                
                 if end_date:
-                    end = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+                    end = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
                     if visit_date > end:
                         continue
-                
                 filtered_visits.append(visit)
             visits = filtered_visits
-        
-        return jsonify([visit.to_dict() for visit in visits]), 200
+        return [visit.to_dict() for visit in visits]
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return JSONResponse({"error": str(e)}, status_code=500)
 
-@visit_bp.route('/<visit_id>', methods=['GET'])
-def get_visit(visit_id):
-    """Récupère une visite par son ID"""
+
+@router.get("/{visit_id}")
+def get_visit(
+    visit_id: str,
+    service: VisitService = Depends(get_visit_service),
+):
     try:
-        service = get_visit_service()
         visit = service.get_visit_by_id(visit_id)
-        
         if not visit:
-            return jsonify({'error': 'Visite non trouvée'}), 404
-        
-        return jsonify(visit.to_dict()), 200
+            return JSONResponse({"error": "Visite non trouvée"}, status_code=404)
+        return visit.to_dict()
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return JSONResponse({"error": str(e)}, status_code=500)
 
-@visit_bp.route('', methods=['POST'])
-def create_visit():
-    """Crée une nouvelle visite"""
+
+@router.post("", status_code=201)
+def create_visit(
+    data: dict[str, Any],
+    service: VisitService = Depends(get_visit_service),
+):
     try:
-        data = request.get_json()
-        service = get_visit_service()
         visit = service.create_visit(data)
-        return jsonify(visit.to_dict()), 201
+        return visit.to_dict()
     except Exception as e:
-        return jsonify({'error': str(e)}), 400
+        return JSONResponse({"error": str(e)}, status_code=400)
 
-@visit_bp.route('/<visit_id>', methods=['PUT'])
-def update_visit(visit_id):
-    """Met à jour une visite"""
+
+@router.put("/{visit_id}")
+def update_visit(
+    visit_id: str,
+    data: dict[str, Any],
+    service: VisitService = Depends(get_visit_service),
+):
     try:
-        data = request.get_json()
-        service = get_visit_service()
         visit = service.update_visit(visit_id, data)
-        
         if not visit:
-            return jsonify({'error': 'Visite non trouvée'}), 404
-        
-        return jsonify(visit.to_dict()), 200
+            return JSONResponse({"error": "Visite non trouvée"}, status_code=404)
+        return visit.to_dict()
     except Exception as e:
-        return jsonify({'error': str(e)}), 400
+        return JSONResponse({"error": str(e)}, status_code=400)
 
-@visit_bp.route('/<visit_id>', methods=['DELETE'])
-def delete_visit(visit_id):
-    """Supprime une visite"""
+
+@router.delete("/{visit_id}")
+def delete_visit(
+    visit_id: str,
+    service: VisitService = Depends(get_visit_service),
+):
     try:
-        service = get_visit_service()
         success = service.delete_visit(visit_id)
-        
         if not success:
-            return jsonify({'error': 'Visite non trouvée'}), 404
-        
-        return jsonify({'message': 'Visite supprimée avec succès'}), 200
+            return JSONResponse({"error": "Visite non trouvée"}, status_code=404)
+        return {"message": "Visite supprimée avec succès"}
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
+        return JSONResponse({"error": str(e)}, status_code=500)

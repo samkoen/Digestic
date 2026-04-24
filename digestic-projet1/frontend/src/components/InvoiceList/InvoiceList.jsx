@@ -12,19 +12,39 @@ import {
   Box,
   Divider,
   Chip,
+  Stack,
 } from '@mui/material'
 import { format } from 'date-fns'
 import { invoiceService } from '../../services/invoiceService'
+import { deliveryNoteService } from '../../services/deliveryNoteService'
 
 function InvoiceList({ open, onClose, pharmacyId, onSelectInvoice, pharmacyEmail }) {
   const [invoices, setInvoices] = useState([])
   const [loading, setLoading] = useState(true)
+  const [deliveryNotes, setDeliveryNotes] = useState([])
+  const [loadingDeliveryNotes, setLoadingDeliveryNotes] = useState(true)
 
   useEffect(() => {
     if (open && pharmacyId) {
       fetchInvoices()
+      fetchDeliveryNotes()
     }
   }, [open, pharmacyId])
+  const fetchDeliveryNotes = async () => {
+    try {
+      setLoadingDeliveryNotes(true)
+      const data = await deliveryNoteService.getAll({ pharmacy_id: pharmacyId })
+      setDeliveryNotes(
+        data.sort((a, b) => new Date(b.delivery_date) - new Date(a.delivery_date))
+      )
+    } catch (error) {
+      console.error('Error fetching delivery notes:', error)
+      setDeliveryNotes([])
+    } finally {
+      setLoadingDeliveryNotes(false)
+    }
+  }
+
 
   const fetchInvoices = async () => {
     try {
@@ -128,6 +148,49 @@ function InvoiceList({ open, onClose, pharmacyId, onSelectInvoice, pharmacyEmail
             ))}
           </List>
         )}
+        <Box sx={{ mt: 3 }}>
+          <Typography variant="h6" gutterBottom>
+            Bons de livraison
+          </Typography>
+          {loadingDeliveryNotes ? (
+            <Box display="flex" justifyContent="center" p={2}>
+              <CircularProgress size={24} />
+            </Box>
+          ) : deliveryNotes.length === 0 ? (
+            <Typography variant="body2" color="text.secondary">
+              Aucun bon de livraison associé pour cette pharmacie
+            </Typography>
+          ) : (
+            <List>
+              {deliveryNotes.map((note, index) => (
+                <React.Fragment key={note.id}>
+                  <ListItem disablePadding>
+                    <ListItemText
+                      primary={
+                        <Stack direction="row" spacing={1} alignItems="center">
+                          <Typography variant="body1" fontWeight="medium">
+                            {formatDate(note.delivery_date)}
+                          </Typography>
+                          <Chip
+                            label={note.status}
+                            color={note.status === 'sent' ? 'success' : 'warning'}
+                            size="small"
+                          />
+                        </Stack>
+                      }
+                      secondary={
+                        <Typography variant="body2" color="text.secondary">
+                          {note.bottles_count} bouteilles
+                        </Typography>
+                      }
+                    />
+                  </ListItem>
+                  {index < deliveryNotes.length - 1 && <Divider />}
+                </React.Fragment>
+              ))}
+            </List>
+          )}
+        </Box>
       </DialogContent>
     </Dialog>
   )

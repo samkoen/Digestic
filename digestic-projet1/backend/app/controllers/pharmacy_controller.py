@@ -1,96 +1,88 @@
-from flask import Blueprint, request, jsonify
-from app.services.pharmacy_service import PharmacyService
+from typing import Any
+
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import JSONResponse
+from sqlalchemy.orm import Session
+
+from app.dependencies import get_db
 from app.repositories.pharmacy_repository import PharmacyRepository
-from app.models.pharmacy import Pharmacy
+from app.services.pharmacy_service import PharmacyService
 
-pharmacy_bp = Blueprint('pharmacy', __name__)
+router = APIRouter()
 
-# Initialisation des services (sera injecté via app context ou config)
-def get_pharmacy_service():
-    from flask import current_app
-    data_dir = current_app.config.get('DATA_DIR', 'data')
-    repository = PharmacyRepository(data_dir)
-    return PharmacyService(repository)
 
-@pharmacy_bp.route('', methods=['GET'])
-def get_pharmacies():
-    """Récupère toutes les pharmacies (filtrées selon le rôle)"""
+def get_pharmacy_service(db: Session = Depends(get_db)) -> PharmacyService:
+    return PharmacyService(PharmacyRepository(db))
+
+
+@router.get("")
+def get_pharmacies(
+    request: Request,
+    service: PharmacyService = Depends(get_pharmacy_service),
+):
     try:
-        from flask import session
-        
-        service = get_pharmacy_service()
-        classification = request.args.get('classification')
-        
-        # Récupérer le rôle de l'utilisateur connecté
-        user_role = session.get('user_role')
-        user_id = session.get('user_id')
-        
-        if user_role == 'commercial' and user_id:
-            # Les commerciaux ne voient que leurs pharmacies
+        user_role = request.session.get("user_role")
+        user_id = request.session.get("user_id")
+        if user_role == "commercial" and user_id:
             all_pharmacies = service.get_all_pharmacies()
             pharmacies = [p for p in all_pharmacies if p.commercial_id == user_id]
         else:
-            # Les admins voient tout
-            if classification:
-                pharmacies = service.get_pharmacies_by_classification(classification)
-            else:
-                pharmacies = service.get_all_pharmacies()
-        
-        return jsonify([pharmacy.to_dict() for pharmacy in pharmacies]), 200
+            pharmacies = service.get_all_pharmacies()
+        return [pharmacy.to_dict() for pharmacy in pharmacies]
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return JSONResponse({"error": str(e)}, status_code=500)
 
-@pharmacy_bp.route('/<pharmacy_id>', methods=['GET'])
-def get_pharmacy(pharmacy_id):
-    """Récupère une pharmacie par son ID"""
+
+@router.get("/{pharmacy_id}")
+def get_pharmacy(
+    pharmacy_id: str,
+    service: PharmacyService = Depends(get_pharmacy_service),
+):
     try:
-        service = get_pharmacy_service()
         pharmacy = service.get_pharmacy_by_id(pharmacy_id)
-        
         if not pharmacy:
-            return jsonify({'error': 'Pharmacie non trouvée'}), 404
-        
-        return jsonify(pharmacy.to_dict()), 200
+            return JSONResponse({"error": "Pharmacie non trouvée"}, status_code=404)
+        return pharmacy.to_dict()
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return JSONResponse({"error": str(e)}, status_code=500)
 
-@pharmacy_bp.route('', methods=['POST'])
-def create_pharmacy():
-    """Crée une nouvelle pharmacie"""
+
+@router.post("", status_code=201)
+def create_pharmacy(
+    data: dict[str, Any],
+    service: PharmacyService = Depends(get_pharmacy_service),
+):
     try:
-        data = request.get_json()
-        service = get_pharmacy_service()
         pharmacy = service.create_pharmacy(data)
-        return jsonify(pharmacy.to_dict()), 201
+        return pharmacy.to_dict()
     except Exception as e:
-        return jsonify({'error': str(e)}), 400
+        return JSONResponse({"error": str(e)}, status_code=400)
 
-@pharmacy_bp.route('/<pharmacy_id>', methods=['PUT'])
-def update_pharmacy(pharmacy_id):
-    """Met à jour une pharmacie"""
+
+@router.put("/{pharmacy_id}")
+def update_pharmacy(
+    pharmacy_id: str,
+    data: dict[str, Any],
+    service: PharmacyService = Depends(get_pharmacy_service),
+):
     try:
-        data = request.get_json()
-        service = get_pharmacy_service()
         pharmacy = service.update_pharmacy(pharmacy_id, data)
-        
         if not pharmacy:
-            return jsonify({'error': 'Pharmacie non trouvée'}), 404
-        
-        return jsonify(pharmacy.to_dict()), 200
+            return JSONResponse({"error": "Pharmacie non trouvée"}, status_code=404)
+        return pharmacy.to_dict()
     except Exception as e:
-        return jsonify({'error': str(e)}), 400
+        return JSONResponse({"error": str(e)}, status_code=400)
 
-@pharmacy_bp.route('/<pharmacy_id>', methods=['DELETE'])
-def delete_pharmacy(pharmacy_id):
-    """Supprime une pharmacie"""
+
+@router.delete("/{pharmacy_id}")
+def delete_pharmacy(
+    pharmacy_id: str,
+    service: PharmacyService = Depends(get_pharmacy_service),
+):
     try:
-        service = get_pharmacy_service()
         success = service.delete_pharmacy(pharmacy_id)
-        
         if not success:
-            return jsonify({'error': 'Pharmacie non trouvée'}), 404
-        
-        return jsonify({'message': 'Pharmacie supprimée avec succès'}), 200
+            return JSONResponse({"error": "Pharmacie non trouvée"}, status_code=404)
+        return {"message": "Pharmacie supprimée avec succès"}
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
+        return JSONResponse({"error": str(e)}, status_code=500)

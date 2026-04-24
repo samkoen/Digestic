@@ -43,8 +43,3 @@ class PharmacyService:
         """Supprime une pharmacie"""
         return self.repository.delete(pharmacy_id)
     
-    def get_pharmacies_by_classification(self, classification: str) -> List[Pharmacy]:
-        """Récupère les pharmacies par classification"""
-        return self.repository.find_by_classification(classification)
-
-

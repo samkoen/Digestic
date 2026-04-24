@@ -18,6 +18,8 @@ import {
   MenuItem,
   TableSortLabel,
   InputAdornment,
+  Avatar,
+  Tooltip,
 } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
 import EditIcon from '@mui/icons-material/Edit'
@@ -30,6 +32,7 @@ import { userService } from '../../services/userService'
 import { visitReportService } from '../../services/visitReportService'
 import { visitService } from '../../services/visitService'
 import PharmacyForm from '../../components/PharmacyForm/PharmacyForm'
+import { getPharmacyStatusLabel } from '../../constants/pharmacyStatus'
 
 function Pharmacies() {
   const [pharmacies, setPharmacies] = useState([])
@@ -47,12 +50,17 @@ function Pharmacies() {
     commercial: '',
     lastVisit: '',
     nextVisit: '',
-    classification: '',
+    pharmacyStatus: '',
   })
   const [editingNextVisitId, setEditingNextVisitId] = useState(null)
   const [editingNextVisitValue, setEditingNextVisitValue] = useState('')
   const [shouldSaveOnBlur, setShouldSaveOnBlur] = useState(true)
   const navigate = useNavigate()
+
+  const getPhotoPreviewUrl = (pharmacy, size = 120) => {
+    const seed = encodeURIComponent(pharmacy.id ?? pharmacy.name ?? 'pharmacy-photo')
+    return pharmacy.photo_url || `https://picsum.photos/seed/${seed}/${size}/${size}`
+  }
 
   useEffect(() => {
     const storedUser = localStorage.getItem('user')
@@ -272,8 +280,7 @@ function Pharmacies() {
         }
       }
       
-      // Filtre par classification
-      if (filters.classification && pharmacy.classification !== filters.classification) {
+      if (filters.pharmacyStatus && pharmacy.status !== filters.pharmacyStatus) {
         return false
       }
       
@@ -305,10 +312,9 @@ function Pharmacies() {
           aValue = a.nextVisitDate ? new Date(a.nextVisitDate).getTime() : 0
           bValue = b.nextVisitDate ? new Date(b.nextVisitDate).getTime() : 0
           break
-        case 'classification':
-          const classOrder = { A: 1, B: 2, C: 3 }
-          aValue = classOrder[a.classification] || 999
-          bValue = classOrder[b.classification] || 999
+        case 'status':
+          aValue = a.status || ''
+          bValue = b.status || ''
           break
         default:
           return 0
@@ -338,20 +344,11 @@ function Pharmacies() {
       commercial: '',
       lastVisit: '',
       nextVisit: '',
-      classification: '',
+      pharmacyStatus: '',
     })
   }
 
   const hasActiveFilters = Object.values(filters).some(v => v !== '')
-
-  const getClassificationColor = (classification) => {
-    const colors = {
-      A: 'error',
-      B: 'warning',
-      C: 'info',
-    }
-    return colors[classification] || 'default'
-  }
 
   const handleNextVisitClick = (pharmacy) => {
     setEditingNextVisitId(pharmacy.id)
@@ -506,11 +503,11 @@ function Pharmacies() {
               </TableCell>
               <TableCell>
                 <TableSortLabel
-                  active={orderBy === 'classification'}
-                  direction={orderBy === 'classification' ? order : 'asc'}
-                  onClick={() => handleSort('classification')}
+                  active={orderBy === 'status'}
+                  direction={orderBy === 'status' ? order : 'asc'}
+                  onClick={() => handleSort('status')}
                 >
-                  Classification
+                  Statut
                 </TableSortLabel>
               </TableCell>
               <TableCell>RIB</TableCell>
@@ -584,16 +581,17 @@ function Pharmacies() {
               <TableCell>
                 <TextField
                   select
-                  value={filters.classification}
-                  onChange={(e) => handleFilterChange('classification', e.target.value)}
+                  value={filters.pharmacyStatus}
+                  onChange={(e) => handleFilterChange('pharmacyStatus', e.target.value)}
                   size="small"
                   fullWidth
                   variant="outlined"
                 >
-                  <MenuItem value="">Toutes</MenuItem>
-                  <MenuItem value="A">A</MenuItem>
-                  <MenuItem value="B">B</MenuItem>
-                  <MenuItem value="C">C</MenuItem>
+                  <MenuItem value="">Tous</MenuItem>
+                  <MenuItem value="actif">Actif</MenuItem>
+                  <MenuItem value="desactive">Désactivé</MenuItem>
+                  <MenuItem value="standby">Stand by</MenuItem>
+                  <MenuItem value="autre">Autre / libre</MenuItem>
                 </TextField>
               </TableCell>
               <TableCell></TableCell>
@@ -608,7 +606,20 @@ function Pharmacies() {
                 onDoubleClick={() => navigate(`/pharmacies/${pharmacy.id}`)}
                 sx={{ cursor: 'pointer' }}
               >
-                <TableCell>{pharmacy.name}</TableCell>
+              <TableCell>
+                <Box display="flex" alignItems="center" gap={1}>
+                  <Tooltip title={`Photo de ${pharmacy.name}`}>
+                    <Avatar
+                      src={getPhotoPreviewUrl(pharmacy, 120)}
+                      alt={`Photo de ${pharmacy.name}`}
+                      sx={{ width: 48, height: 48 }}
+                    />
+                  </Tooltip>
+                  <Typography variant="body1" fontWeight="medium">
+                    {pharmacy.name}
+                  </Typography>
+                </Box>
+              </TableCell>
                 <TableCell>
                   {pharmacy.address}, {pharmacy.postal_code} {pharmacy.city}
                 </TableCell>
@@ -685,9 +696,10 @@ function Pharmacies() {
                 </TableCell>
                 <TableCell>
                   <Chip
-                    label={pharmacy.classification}
-                    color={getClassificationColor(pharmacy.classification)}
+                    label={getPharmacyStatusLabel(pharmacy.status)}
+                    color={pharmacy.status === 'actif' ? 'success' : 'default'}
                     size="small"
+                    variant="outlined"
                   />
                 </TableCell>
                 <TableCell>

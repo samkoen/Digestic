@@ -1,93 +1,94 @@
-from flask import Blueprint, request, jsonify
+import uuid
+from datetime import datetime
+from typing import Any
+
+from fastapi import APIRouter, Depends
+from fastapi.responses import JSONResponse
+from sqlalchemy.orm import Session
+
+from app.dependencies import get_db
 from app.repositories.user_repository import UserRepository
 
-user_bp = Blueprint('user', __name__)
+router = APIRouter()
 
-def get_user_repository():
-    from flask import current_app
-    data_dir = current_app.config.get('DATA_DIR', 'data')
-    return UserRepository(data_dir)
 
-@user_bp.route('', methods=['GET'])
-def get_users():
-    """Récupère tous les utilisateurs"""
+def get_user_repository(db: Session = Depends(get_db)) -> UserRepository:
+    return UserRepository(db)
+
+
+@router.get("")
+def get_users(
+    role: str | None = None,
+    repo: UserRepository = Depends(get_user_repository),
+):
     try:
-        repo = get_user_repository()
-        role = request.args.get('role')
-        
         if role:
             users = repo.find_by_role(role)
         else:
             users = repo.find_all()
-        
-        return jsonify([user.to_dict() for user in users]), 200
+        return [user.to_dict() for user in users]
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return JSONResponse({"error": str(e)}, status_code=500)
 
-@user_bp.route('/<user_id>', methods=['GET'])
-def get_user(user_id):
-    """Récupère un utilisateur par son ID"""
+
+@router.get("/{user_id}")
+def get_user(
+    user_id: str,
+    repo: UserRepository = Depends(get_user_repository),
+):
     try:
-        repo = get_user_repository()
         user = repo.find_by_id(user_id)
-        
         if not user:
-            return jsonify({'error': 'Utilisateur non trouvé'}), 404
-        
-        return jsonify(user.to_dict()), 200
+            return JSONResponse({"error": "Utilisateur non trouvé"}, status_code=404)
+        return user.to_dict()
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return JSONResponse({"error": str(e)}, status_code=500)
 
-@user_bp.route('', methods=['POST'])
-def create_user():
-    """Crée un nouvel utilisateur"""
+
+@router.post("", status_code=201)
+def create_user(
+    data: dict[str, Any],
+    repo: UserRepository = Depends(get_user_repository),
+):
     try:
-        data = request.get_json()
-        import uuid
-        data['id'] = str(uuid.uuid4())
-        
-        repo = get_user_repository()
+        data = dict(data)
+        data["id"] = str(uuid.uuid4())
         user = repo._model_from_dict(data)
         user = repo.create(user)
-        
-        return jsonify(user.to_dict()), 201
+        return user.to_dict()
     except Exception as e:
-        return jsonify({'error': str(e)}), 400
+        return JSONResponse({"error": str(e)}, status_code=400)
 
-@user_bp.route('/<user_id>', methods=['PUT'])
-def update_user(user_id):
-    """Met à jour un utilisateur"""
+
+@router.put("/{user_id}")
+def update_user(
+    user_id: str,
+    data: dict[str, Any],
+    repo: UserRepository = Depends(get_user_repository),
+):
     try:
-        data = request.get_json()
-        repo = get_user_repository()
         existing = repo.find_by_id(user_id)
-        
         if not existing:
-            return jsonify({'error': 'Utilisateur non trouvé'}), 404
-        
+            return JSONResponse({"error": "Utilisateur non trouvé"}, status_code=404)
         for key, value in data.items():
             if hasattr(existing, key):
                 setattr(existing, key, value)
-        
-        from datetime import datetime
         existing.updated_at = datetime.now().isoformat()
-        
         user = repo.update(user_id, existing)
-        return jsonify(user.to_dict()), 200
+        return user.to_dict()
     except Exception as e:
-        return jsonify({'error': str(e)}), 400
+        return JSONResponse({"error": str(e)}, status_code=400)
 
-@user_bp.route('/<user_id>', methods=['DELETE'])
-def delete_user(user_id):
-    """Supprime un utilisateur"""
+
+@router.delete("/{user_id}")
+def delete_user(
+    user_id: str,
+    repo: UserRepository = Depends(get_user_repository),
+):
     try:
-        repo = get_user_repository()
         success = repo.delete(user_id)
-        
         if not success:
-            return jsonify({'error': 'Utilisateur non trouvé'}), 404
-        
-        return jsonify({'message': 'Utilisateur supprimé avec succès'}), 200
+            return JSONResponse({"error": "Utilisateur non trouvé"}, status_code=404)
+        return {"message": "Utilisateur supprimé avec succès"}
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
+        return JSONResponse({"error": str(e)}, status_code=500)

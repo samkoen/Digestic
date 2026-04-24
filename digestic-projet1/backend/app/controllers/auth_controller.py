@@ -1,74 +1,72 @@
-from flask import Blueprint, request, jsonify, session
-from app.services.auth_service import AuthService
+import traceback
+from typing import Any
+
+from fastapi import APIRouter, Body, Depends, Request
+from fastapi.responses import JSONResponse
+from sqlalchemy.orm import Session
+
+from app.dependencies import get_db
 from app.repositories.user_repository import UserRepository
+from app.services.auth_service import AuthService
 
-auth_bp = Blueprint('auth', __name__)
+router = APIRouter()
 
-def get_auth_service():
-    from flask import current_app
-    data_dir = current_app.config.get('DATA_DIR', 'data')
-    repository = UserRepository(data_dir)
-    return AuthService(repository)
 
-@auth_bp.route('/login', methods=['POST'])
-def login():
-    """Authentifie un utilisateur"""
+def get_auth_service(db: Session = Depends(get_db)) -> AuthService:
+    return AuthService(UserRepository(db))
+
+
+@router.post("/login")
+def login(
+    request: Request,
+    data: dict[str, Any] | None = Body(default=None),
+    service: AuthService = Depends(get_auth_service),
+):
     try:
-        data = request.get_json()
         if not data:
-            return jsonify({'error': 'Données manquantes'}), 400
-            
-        email = data.get('email')
-        
+            return JSONResponse({"error": "Données manquantes"}, status_code=400)
+        email = data.get("email")
         if not email:
-            return jsonify({'error': 'Email requis'}), 400
-        
-        service = get_auth_service()
+            return JSONResponse({"error": "Email requis"}, status_code=400)
         user = service.authenticate(email)
-        
         if not user:
-            return jsonify({'error': 'Email ou mot de passe incorrect'}), 401
-        
-        # Créer une session
-        session['user_id'] = user['id']
-        session['user_role'] = user['role']
-        session['user_email'] = user['email']
-        session.permanent = True
-        
-        return jsonify({
-            'message': 'Connexion réussie',
-            'user': user
-        }), 200
+            return JSONResponse(
+                {"error": "Email ou mot de passe incorrect"},
+                status_code=401,
+            )
+        request.session["user_id"] = user["id"]
+        request.session["user_role"] = user["role"]
+        request.session["user_email"] = user["email"]
+        return {"message": "Connexion réussie", "user": user}
     except Exception as e:
-        import traceback
         traceback.print_exc()
-        return jsonify({'error': f'Erreur serveur: {str(e)}'}), 500
+        return JSONResponse(
+            {"error": f"Erreur serveur: {str(e)}"},
+            status_code=500,
+        )
 
-@auth_bp.route('/logout', methods=['POST'])
-def logout():
-    """Déconnecte un utilisateur"""
+
+@router.post("/logout")
+def logout(request: Request):
     try:
-        session.clear()
-        return jsonify({'message': 'Déconnexion réussie'}), 200
+        request.session.clear()
+        return {"message": "Déconnexion réussie"}
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return JSONResponse({"error": str(e)}, status_code=500)
 
-@auth_bp.route('/me', methods=['GET'])
-def get_current_user():
-    """Récupère l'utilisateur actuellement connecté"""
+
+@router.get("/me")
+def get_current_user(
+    request: Request,
+    service: AuthService = Depends(get_auth_service),
+):
     try:
-        user_id = session.get('user_id')
-        
+        user_id = request.session.get("user_id")
         if not user_id:
-            return jsonify({'error': 'Non authentifié'}), 401
-        
-        service = get_auth_service()
+            return JSONResponse({"error": "Non authentifié"}, status_code=401)
         user = service.get_user_by_id(user_id)
-        
         if not user:
-            return jsonify({'error': 'Utilisateur non trouvé'}), 404
-        
-        return jsonify({'user': user}), 200
+            return JSONResponse({"error": "Utilisateur non trouvé"}, status_code=404)
+        return {"user": user}
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
+        return JSONResponse({"error": str(e)}, status_code=500)

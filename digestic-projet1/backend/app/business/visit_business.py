@@ -13,8 +13,7 @@ class VisitBusiness:
     
     def optimize_route(self, pharmacy_ids: List[str], start_location: Optional[dict] = None) -> List[str]:
         """
-        Optimise l'itinéraire de visite basé sur les pharmacies et leur classification.
-        Utilise un algorithme simple de plus proche voisin.
+        Optimise l'itinéraire de visite (géolocalisation + plus proche voisin).
         
         Args:
             pharmacy_ids: Liste des IDs de pharmacies à visiter
@@ -35,12 +34,7 @@ class VisitBusiness:
         if not pharmacies:
             return pharmacy_ids  # Retourne l'ordre original si pas de coordonnées
         
-        # Trier par classification (A > B > C) puis par distance
-        pharmacies.sort(key=lambda p: (
-            {'A': 0, 'B': 1, 'C': 2}.get(p.classification, 3),
-            p.latitude or 0,
-            p.longitude or 0
-        ))
+        pharmacies.sort(key=lambda p: (p.latitude or 0, p.longitude or 0))
         
         # Algorithme du plus proche voisin si on a une position de départ
         if start_location and start_location.get('latitude') and start_location.get('longitude'):
@@ -64,7 +58,6 @@ class VisitBusiness:
             
             return optimized
         
-        # Sinon, retourner trié par classification
         return [p.id for p in pharmacies]
     
     def _calculate_distance(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -74,7 +67,7 @@ class VisitBusiness:
     
     def suggest_next_visit_date(self, pharmacy_id: str, last_visit_date: Optional[str] = None) -> str:
         """
-        Suggère une date de prochaine visite basée sur la classification de la pharmacie
+        Suggère une date de prochaine visite (délai de 30 jours par défaut).
         
         Args:
             pharmacy_id: ID de la pharmacie
@@ -86,18 +79,9 @@ class VisitBusiness:
         from datetime import datetime, timedelta
         
         pharmacy = self.pharmacy_service.get_pharmacy_by_id(pharmacy_id)
+        days = 30
         if not pharmacy:
-            # Par défaut, 30 jours
-            return (datetime.now() + timedelta(days=30)).isoformat()
-        
-        # Fréquence selon classification
-        frequency_days = {
-            'A': 15,  # Visites fréquentes pour les pharmacies prioritaires
-            'B': 30,
-            'C': 45
-        }
-        
-        days = frequency_days.get(pharmacy.classification, 30)
+            return (datetime.now() + timedelta(days=days)).isoformat()
         
         if last_visit_date:
             last_date = datetime.fromisoformat(last_visit_date)

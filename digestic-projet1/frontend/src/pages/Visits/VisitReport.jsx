@@ -18,6 +18,7 @@ import SaveIcon from '@mui/icons-material/Save'
 import { visitReportService } from '../../services/visitReportService'
 import { visitService } from '../../services/visitService'
 import { pharmacyService } from '../../services/pharmacyService'
+import { PAYMENT_MODES, DEFAULT_PAYMENT_MODE } from '../../constants/paymentModes'
 
 function VisitReport() {
   const { visitId } = useParams()
@@ -35,9 +36,10 @@ function VisitReport() {
     covering_status: 'unknown',
     covering_size_to_order: '',
     next_visit_date: '',
-    delivery_mode: 'normal',
     notes: '',
+    payment_mode: DEFAULT_PAYMENT_MODE,
   })
+  const [defaultPaymentMode, setDefaultPaymentMode] = useState(DEFAULT_PAYMENT_MODE)
 
   useEffect(() => {
     fetchVisit()
@@ -48,6 +50,17 @@ function VisitReport() {
       setLoading(true)
       const visitData = await visitService.getById(visitId)
       setVisit(visitData)
+      try {
+        const pharmacyData = await pharmacyService.getById(visitData.pharmacy_id)
+        const mode = pharmacyData?.payment_mode || DEFAULT_PAYMENT_MODE
+        setDefaultPaymentMode(mode)
+        setFormData((prev) => ({
+          ...prev,
+          payment_mode: mode,
+        }))
+      } catch (pharmacyError) {
+        console.error('Erreur lors de la récupération de la pharmacie:', pharmacyError)
+      }
     } catch (error) {
       console.error('Error fetching visit:', error)
     } finally {
@@ -57,10 +70,16 @@ function VisitReport() {
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target
-    setFormData((prev) => ({
-      ...prev,
-      [name]: type === 'checkbox' ? checked : value,
-    }))
+    setFormData((prev) => {
+      const next = {
+        ...prev,
+        [name]: type === 'checkbox' ? checked : value,
+      }
+      if (name === 'has_deposit' && type === 'checkbox' && checked && !prev.payment_mode) {
+        next.payment_mode = defaultPaymentMode
+      }
+      return next
+    })
   }
 
   const handleSubmit = async (e) => {
@@ -187,17 +206,20 @@ function VisitReport() {
                       onChange={handleChange}
                     />
                   </Grid>
-                  <Grid item xs={12} sm={4}>
+                  <Grid item xs={12} sm={6}>
                     <TextField
                       fullWidth
                       select
-                      label="Mode de livraison"
-                      name="delivery_mode"
-                      value={formData.delivery_mode}
+                      label="Mode de paiement dépôt"
+                      name="payment_mode"
+                      value={formData.payment_mode}
                       onChange={handleChange}
                     >
-                      <MenuItem value="normal">Normal</MenuItem>
-                      <MenuItem value="deposit_sale">Dépôt-vente</MenuItem>
+                      {PAYMENT_MODES.map((mode) => (
+                        <MenuItem key={mode} value={mode}>
+                          {mode}
+                        </MenuItem>
+                      ))}
                     </TextField>
                   </Grid>
                 </>

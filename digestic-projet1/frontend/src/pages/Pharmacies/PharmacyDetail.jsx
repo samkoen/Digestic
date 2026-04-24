@@ -8,7 +8,6 @@ import {
   Grid,
   Button,
   CircularProgress,
-  Chip,
   Divider,
   IconButton,
   Tooltip,
@@ -20,12 +19,15 @@ import {
   MenuItem,
   FormControlLabel,
   Checkbox,
+  Avatar,
 } from '@mui/material'
 import ArrowBackIcon from '@mui/icons-material/ArrowBack'
 import DescriptionIcon from '@mui/icons-material/Description'
 import ReceiptIcon from '@mui/icons-material/Receipt'
 import AddIcon from '@mui/icons-material/Add'
+import CloseIcon from '@mui/icons-material/Close'
 import { format } from 'date-fns'
+import { getPharmacyStatusLabel } from '../../constants/pharmacyStatus'
 import { pharmacyService } from '../../services/pharmacyService'
 import { visitService } from '../../services/visitService'
 import { invoiceService } from '../../services/invoiceService'
@@ -34,6 +36,7 @@ import VisitReportList from '../../components/VisitReportList/VisitReportList'
 import VisitReportDetail from '../../components/VisitReportDetail/VisitReportDetail'
 import InvoiceList from '../../components/InvoiceList/InvoiceList'
 import InvoiceDetail from '../../components/InvoiceDetail/InvoiceDetail'
+import { PAYMENT_MODES, DEFAULT_PAYMENT_MODE } from '../../constants/paymentModes'
 
 function PharmacyDetail() {
   const { id } = useParams()
@@ -52,7 +55,9 @@ function PharmacyDetail() {
   const [invoiceDetailOpen, setInvoiceDetailOpen] = useState(false)
   const [selectedInvoice, setSelectedInvoice] = useState(null)
   const [newReportOpen, setNewReportOpen] = useState(false)
-  const [reportFormData, setReportFormData] = useState({
+  const [photoDialogOpen, setPhotoDialogOpen] = useState(false)
+  const getDefaultReportPaymentMode = () => pharmacy?.payment_mode || DEFAULT_PAYMENT_MODE
+  const getDefaultReportFormData = () => ({
     visit_status: 'completed',
     visit_not_completed_reason: '',
     has_deposit: false,
@@ -63,9 +68,10 @@ function PharmacyDetail() {
     covering_status: 'unknown',
     covering_size_to_order: '',
     next_visit_date: '',
-    delivery_mode: 'normal',
     notes: '',
+    payment_mode: getDefaultReportPaymentMode(),
   })
+  const [reportFormData, setReportFormData] = useState(getDefaultReportFormData)
 
   useEffect(() => {
     fetchData()
@@ -96,6 +102,14 @@ function PharmacyDetail() {
   }
 
 
+  const resetReportForm = () => setReportFormData(getDefaultReportFormData())
+
+  const handleOpenNewReport = () => {
+    resetReportForm()
+    setNewReportOpen(true)
+  }
+
+
   const handleCreateReport = async () => {
     try {
       // Chercher une visite planifiée existante pour cette pharmacie (optionnelle)
@@ -107,6 +121,12 @@ function PharmacyDetail() {
         commercial_id: user.id,
         visit_date: new Date().toISOString(),
         ...reportFormData,
+      }
+      if (!reportFormData.has_deposit) {
+        delete reportData.payment_mode
+      }
+      if (reportFormData.has_deposit && !reportData.payment_mode) {
+        reportData.payment_mode = getDefaultReportPaymentMode()
       }
       
       // Ajouter visit_id seulement s'il existe
@@ -133,20 +153,7 @@ function PharmacyDetail() {
       }
       
       setNewReportOpen(false)
-      setReportFormData({
-        visit_status: 'completed',
-        visit_not_completed_reason: '',
-        has_deposit: false,
-        bottles_deposited: 0,
-        free_units: 0,
-        stock_status: 'unknown',
-        display_stand_status: 'unknown',
-        covering_status: 'unknown',
-        covering_size_to_order: '',
-        next_visit_date: '',
-        delivery_mode: 'normal',
-        notes: '',
-      })
+      resetReportForm()
       await fetchData() // Rafraîchir les données
     } catch (error) {
       console.error('Error creating report:', error)
@@ -157,10 +164,24 @@ function PharmacyDetail() {
 
   const handleReportFormChange = (e) => {
     const { name, value, type, checked } = e.target
-    setReportFormData((prev) => ({
-      ...prev,
-      [name]: type === 'checkbox' ? checked : value,
-    }))
+    setReportFormData((prev) => {
+      const next = {
+        ...prev,
+        [name]: type === 'checkbox' ? checked : value,
+      }
+      if (name === 'has_deposit' && type === 'checkbox' && checked && !next.payment_mode) {
+        next.payment_mode = getDefaultReportPaymentMode()
+      }
+      return next
+    })
+  }
+
+  const handlePhotoOpen = () => {
+    setPhotoDialogOpen(true)
+  }
+
+  const handlePhotoClose = () => {
+    setPhotoDialogOpen(false)
   }
 
   if (loading) {
@@ -178,6 +199,12 @@ function PharmacyDetail() {
       </Box>
     )
   }
+
+  const photoSeed = encodeURIComponent(pharmacy.id ?? pharmacy.name ?? 'pharmacy-photo')
+  const photoPreviewUrl =
+    pharmacy.photo_url || `https://picsum.photos/seed/${photoSeed}/400/400`
+  const photoEnlargedUrl =
+    pharmacy.photo_url || `https://picsum.photos/seed/${photoSeed}/1200/900`
 
   return (
     <Box>
@@ -204,19 +231,33 @@ function PharmacyDetail() {
       </Button>
 
       <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
-        <Typography variant="h4">
-          {pharmacy.name}
-        </Typography>
+        <Box display="flex" alignItems="center" gap={2}>
+          <Tooltip title="Voir la photo">
+            <Avatar
+              alt={`Photo de ${pharmacy.name}`}
+              src={photoPreviewUrl}
+              sx={{
+                width: 72,
+                height: 72,
+                cursor: 'pointer',
+                border: '2px solid',
+                borderColor: 'primary.main',
+              }}
+              onClick={handlePhotoOpen}
+            />
+          </Tooltip>
+          <Typography variant="h4">{pharmacy.name}</Typography>
+        </Box>
         <Box display="flex" gap={1}>
           {user?.role === 'commercial' && (
-            <Tooltip title="Ajouter un rapport de visite">
-              <IconButton
-                color="primary"
-                onClick={() => setNewReportOpen(true)}
-              >
-                <AddIcon />
-              </IconButton>
-            </Tooltip>
+          <Tooltip title="Ajouter un rapport de visite">
+            <IconButton
+              color="primary"
+              onClick={handleOpenNewReport}
+            >
+              <AddIcon />
+            </IconButton>
+          </Tooltip>
           )}
           <Tooltip title="Voir les rapports de visite">
             <IconButton
@@ -252,13 +293,11 @@ function PharmacyDetail() {
               <Typography><strong>Email:</strong> {pharmacy.pharmacist_email || '-'}</Typography>
               <Typography><strong>Téléphone:</strong> {pharmacy.pharmacist_phone || '-'}</Typography>
               <Typography><strong>RIB:</strong> {pharmacy.rib || '-'}</Typography>
+              <Typography><strong>Mode de paiement dépôt:</strong> {pharmacy.payment_mode || '-'}</Typography>
+              <Typography>
+                <strong>Statut:</strong> {getPharmacyStatusLabel(pharmacy.status)}
+              </Typography>
               <Typography><strong>Prochaine visite:</strong> {pharmacy.next_visit_date ? format(new Date(pharmacy.next_visit_date), 'dd/MM/yyyy') : '-'}</Typography>
-              <Box sx={{ mt: 2 }}>
-                <Chip
-                  label={`Classification: ${pharmacy.classification}`}
-                  color={pharmacy.classification === 'A' ? 'error' : pharmacy.classification === 'B' ? 'warning' : 'info'}
-                />
-              </Box>
             </CardContent>
           </Card>
         </Grid>
@@ -345,8 +384,34 @@ function PharmacyDetail() {
         pharmacyEmail={pharmacy?.pharmacist_email}
       />
 
+      <Dialog open={photoDialogOpen} onClose={handlePhotoClose} maxWidth="lg" fullWidth>
+        <DialogTitle sx={{ m: 0, p: 2 }}>
+          Photo de {pharmacy.name}
+          <IconButton
+            aria-label="Fermer la photo"
+            onClick={handlePhotoClose}
+            sx={{ position: 'absolute', right: 8, top: 8 }}
+          >
+            <CloseIcon />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent sx={{ p: 0, backgroundColor: 'common.black', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+          <Box
+            component="img"
+            src={photoEnlargedUrl}
+            alt={`Photo de ${pharmacy.name}`}
+            sx={{
+              width: '100%',
+              maxHeight: '80vh',
+              objectFit: 'contain',
+              display: 'block',
+            }}
+          />
+        </DialogContent>
+      </Dialog>
+
       {/* Modal pour créer un rapport de visite */}
-      <Dialog open={newReportOpen} onClose={() => setNewReportOpen(false)} maxWidth="md" fullWidth>
+      <Dialog open={newReportOpen} onClose={() => { setNewReportOpen(false); resetReportForm() }} maxWidth="md" fullWidth>
         <DialogTitle>Nouveau rapport de visite</DialogTitle>
         <DialogContent>
           <Grid container spacing={2} sx={{ mt: 1 }}>
@@ -413,17 +478,20 @@ function PharmacyDetail() {
                     onChange={handleReportFormChange}
                   />
                 </Grid>
-                <Grid item xs={12} sm={4}>
+                <Grid item xs={12} sm={6}>
                   <TextField
                     fullWidth
                     select
-                    label="Mode de livraison"
-                    name="delivery_mode"
-                    value={reportFormData.delivery_mode}
+                    label="Mode de paiement dépôt"
+                    name="payment_mode"
+                    value={reportFormData.payment_mode}
                     onChange={handleReportFormChange}
                   >
-                    <MenuItem value="normal">Normal</MenuItem>
-                    <MenuItem value="deposit_sale">Dépôt-vente</MenuItem>
+                    {PAYMENT_MODES.map((mode) => (
+                      <MenuItem key={mode} value={mode}>
+                        {mode}
+                      </MenuItem>
+                    ))}
                   </TextField>
                 </Grid>
               </>
