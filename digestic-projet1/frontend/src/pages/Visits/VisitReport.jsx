@@ -19,6 +19,7 @@ import { visitReportService } from '../../services/visitReportService'
 import { visitService } from '../../services/visitService'
 import { pharmacyService } from '../../services/pharmacyService'
 import { PAYMENT_MODES, DEFAULT_PAYMENT_MODE } from '../../constants/paymentModes'
+import { WEEKS_UNTIL_RETURN_OPTIONS } from '../../constants/visitReportForm'
 
 function VisitReport() {
   const { visitId } = useParams()
@@ -35,7 +36,10 @@ function VisitReport() {
     display_stand_status: 'unknown',
     covering_status: 'unknown',
     covering_size_to_order: '',
-    next_visit_date: '',
+    weeks_until_return: '',
+    voice_note_url: '',
+    photo_note_url: '',
+    video_note_url: '',
     notes: '',
     payment_mode: DEFAULT_PAYMENT_MODE,
   })
@@ -82,34 +86,45 @@ function VisitReport() {
     })
   }
 
+  const handleMediaUpload = async (field) => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    if (field === 'voice_note_url') {
+      input.accept = 'audio/*'
+    } else if (field === 'photo_note_url') {
+      input.accept = 'image/*'
+    } else {
+      input.accept = 'video/*'
+    }
+    input.onchange = async (ev) => {
+      const file = ev.target?.files?.[0]
+      if (!file) return
+      try {
+        const url = await visitReportService.uploadMedia(file)
+        setFormData((prev) => ({ ...prev, [field]: url }))
+      } catch (err) {
+        console.error(err)
+        alert("Échec de l'envoi du fichier")
+      }
+    }
+    input.click()
+  }
+
   const handleSubmit = async (e) => {
     e.preventDefault()
     try {
+      const { weeks_until_return, ...rest } = formData
       const reportData = {
         visit_id: visitId,
         pharmacy_id: visit.pharmacy_id,
         commercial_id: visit.commercial_id,
         visit_date: new Date().toISOString(),
-        ...formData,
+        ...rest,
+      }
+      if (weeks_until_return) {
+        reportData.weeks_until_return = parseInt(weeks_until_return, 10)
       }
       await visitReportService.create(reportData)
-      
-      // Si une date de prochaine visite est fournie, mettre à jour la pharmacie
-      if (formData.next_visit_date && formData.next_visit_date.trim() !== '') {
-        try {
-          // Convertir la date yyyy-MM-dd en ISO format
-          const dateObj = new Date(formData.next_visit_date + 'T00:00:00')
-          if (!isNaN(dateObj.getTime())) {
-            await pharmacyService.update(visit.pharmacy_id, {
-              next_visit_date: dateObj.toISOString()
-            })
-          }
-        } catch (dateError) {
-          console.error('Error updating pharmacy next visit date:', dateError)
-          // Ne pas bloquer si la mise à jour de la date échoue
-        }
-      }
-      
       navigate('/visits')
     } catch (error) {
       console.error('Error creating report:', error)
@@ -142,7 +157,16 @@ function VisitReport() {
       <Card sx={{ mt: 3 }}>
         <CardContent>
           <form onSubmit={handleSubmit}>
-            <Grid container spacing={3}>
+            <Grid
+              container
+              spacing={3}
+              sx={{
+                '& .MuiTextField-root .MuiInputLabel-root': {
+                  lineHeight: 1.25,
+                  paddingTop: '1px',
+                },
+              }}
+            >
               <Grid item xs={12} sm={6}>
                 <TextField
                   fullWidth
@@ -151,6 +175,7 @@ function VisitReport() {
                   name="visit_status"
                   value={formData.visit_status}
                   onChange={handleChange}
+                  InputLabelProps={{ shrink: true }}
                 >
                   <MenuItem value="completed">Effectuée</MenuItem>
                   <MenuItem value="not_completed">Non effectuée</MenuItem>
@@ -165,9 +190,11 @@ function VisitReport() {
                     name="visit_not_completed_reason"
                     value={formData.visit_not_completed_reason}
                     onChange={handleChange}
+                    InputLabelProps={{ shrink: true }}
                   >
                     <MenuItem value="pharmacy_closed">Pharmacie fermée</MenuItem>
                     <MenuItem value="owner_absent">Titulaire absent</MenuItem>
+                    <MenuItem value="refus">Refus</MenuItem>
                   </TextField>
                 </Grid>
               )}
@@ -194,6 +221,7 @@ function VisitReport() {
                       name="bottles_deposited"
                       value={formData.bottles_deposited}
                       onChange={handleChange}
+                      InputLabelProps={{ shrink: true }}
                     />
                   </Grid>
                   <Grid item xs={12} sm={4}>
@@ -204,6 +232,7 @@ function VisitReport() {
                       name="free_units"
                       value={formData.free_units}
                       onChange={handleChange}
+                      InputLabelProps={{ shrink: true }}
                     />
                   </Grid>
                   <Grid item xs={12} sm={6}>
@@ -214,6 +243,7 @@ function VisitReport() {
                       name="payment_mode"
                       value={formData.payment_mode}
                       onChange={handleChange}
+                      InputLabelProps={{ shrink: true }}
                     >
                       {PAYMENT_MODES.map((mode) => (
                         <MenuItem key={mode} value={mode}>
@@ -233,6 +263,7 @@ function VisitReport() {
                   name="stock_status"
                   value={formData.stock_status}
                   onChange={handleChange}
+                  InputLabelProps={{ shrink: true }}
                 >
                   <MenuItem value="good">Bon</MenuItem>
                   <MenuItem value="low">Faible</MenuItem>
@@ -249,6 +280,7 @@ function VisitReport() {
                   name="display_stand_status"
                   value={formData.display_stand_status}
                   onChange={handleChange}
+                  InputLabelProps={{ shrink: true }}
                 >
                   <MenuItem value="in_place">En place</MenuItem>
                   <MenuItem value="not_in_place">Non en place</MenuItem>
@@ -264,6 +296,7 @@ function VisitReport() {
                   name="covering_status"
                   value={formData.covering_status}
                   onChange={handleChange}
+                  InputLabelProps={{ shrink: true }}
                 >
                   <MenuItem value="in_place">En place</MenuItem>
                   <MenuItem value="to_order">À commander</MenuItem>
@@ -279,6 +312,7 @@ function VisitReport() {
                     name="covering_size_to_order"
                     value={formData.covering_size_to_order}
                     onChange={handleChange}
+                    InputLabelProps={{ shrink: true }}
                   />
                 </Grid>
               )}
@@ -286,24 +320,77 @@ function VisitReport() {
               <Grid item xs={12} sm={6}>
                 <TextField
                   fullWidth
-                  type="date"
-                  label="Date de la prochaine visite"
-                  name="next_visit_date"
-                  value={formData.next_visit_date}
+                  select
+                  label="Semaine de retour prévu"
+                  name="weeks_until_return"
+                  value={formData.weeks_until_return}
                   onChange={handleChange}
                   InputLabelProps={{ shrink: true }}
-                />
+                >
+                  <MenuItem value="">—</MenuItem>
+                  {WEEKS_UNTIL_RETURN_OPTIONS.map((o) => (
+                    <MenuItem key={o.value} value={o.value}>
+                      {o.label}
+                    </MenuItem>
+                  ))}
+                </TextField>
+              </Grid>
+
+              <Grid item xs={12}>
+                <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                  Pièces jointes
+                </Typography>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 1 }}>
+                  <Button type="button" size="small" variant="outlined" onClick={() => handleMediaUpload('voice_note_url')}>
+                    Note vocale
+                  </Button>
+                  <Button type="button" size="small" variant="outlined" onClick={() => handleMediaUpload('photo_note_url')}>
+                    Photo
+                  </Button>
+                  <Button type="button" size="small" variant="outlined" onClick={() => handleMediaUpload('video_note_url')}>
+                    Vidéo
+                  </Button>
+                </Box>
+                {formData.voice_note_url && (
+                  <Box sx={{ mb: 1 }}>
+                    <audio controls src={formData.voice_note_url} style={{ maxWidth: '100%' }} />
+                    <Button size="small" onClick={() => setFormData((p) => ({ ...p, voice_note_url: '' }))}>
+                      Retirer
+                    </Button>
+                  </Box>
+                )}
+                {formData.photo_note_url && (
+                  <Box sx={{ mb: 1 }}>
+                    <Box component="img" src={formData.photo_note_url} alt="Note photo" sx={{ maxHeight: 120, display: 'block' }} />
+                    <Button size="small" onClick={() => setFormData((p) => ({ ...p, photo_note_url: '' }))}>
+                      Retirer
+                    </Button>
+                  </Box>
+                )}
+                {formData.video_note_url && (
+                  <Box sx={{ mb: 1 }}>
+                    <video
+                      src={formData.video_note_url}
+                      controls
+                      style={{ maxWidth: '100%', maxHeight: 200 }}
+                    />
+                    <Button size="small" onClick={() => setFormData((p) => ({ ...p, video_note_url: '' }))}>
+                      Retirer
+                    </Button>
+                  </Box>
+                )}
               </Grid>
 
               <Grid item xs={12}>
                 <TextField
                   fullWidth
                   multiline
-                  rows={4}
+                  rows={2}
                   label="Notes"
                   name="notes"
                   value={formData.notes}
                   onChange={handleChange}
+                  InputLabelProps={{ shrink: true }}
                 />
               </Grid>
 

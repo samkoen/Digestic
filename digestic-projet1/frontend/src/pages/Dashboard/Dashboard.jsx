@@ -27,8 +27,8 @@ function Dashboard() {
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const [pharmacies, visits, invoices, overdue] = await Promise.all([
-          pharmacyService.getAll(),
+        const [pharmacyPage, visits, invoices, overdue] = await Promise.all([
+          pharmacyService.getList({ page: 1, page_size: 1, sort: 'name', order: 'asc' }),
           visitService.getAll({ status: 'planned' }),
           invoiceService.getAll({ status: 'pending' }),
           invoiceService.getOverdue(30),
@@ -40,7 +40,7 @@ function Dashboard() {
         ).length
 
         setStats({
-          pharmacies: pharmacies.length,
+          pharmacies: pharmacyPage?.total ?? 0,
           visitsToday,
           pendingInvoices: invoices.length,
           overdueInvoices: overdue.length,

@@ -45,7 +45,9 @@ def parse_datetime_iso(dt: datetime | None) -> str:
 
 
 def _payment_to_api(mode: str) -> str:
-    return mode
+    from app.core.payment_modes import payment_mode_for_api
+
+    return payment_mode_for_api(mode)
 
 
 def user_orm_to_domain(row: orm.User) -> User:
@@ -62,7 +64,10 @@ def user_orm_to_domain(row: orm.User) -> User:
     )
 
 
-def pharm_orm_to_domain(p: orm.Pharmacy) -> Pharmacy:
+def pharm_orm_to_domain(p: orm.Pharmacy, warehouse: orm.Warehouse | None = None) -> Pharmacy:
+    w = warehouse
+    if w is None and getattr(p, "warehouse", None) is not None:
+        w = p.warehouse
     return Pharmacy(
         id=str(p.id),
         name=p.name,
@@ -70,16 +75,21 @@ def pharm_orm_to_domain(p: orm.Pharmacy) -> Pharmacy:
         city=p.city,
         postal_code=p.postal_code,
         warehouse_id=str(p.warehouse_id),
+        depot_name=(w.name if w else None),
+        depot_type=(w.depot_type if w else None),
         country=p.country,
         email=p.email,
+        phone=p.phone,
         latitude=p.latitude,
         longitude=p.longitude,
         pharmacist_name=p.owner_name,
-        pharmacist_email=p.owner_email,
-        pharmacist_phone=p.owner_phone,
+        # owner_* peut être vide alors que email/phone de la pharmacie sont renseignés (ex. import Sage)
+        pharmacist_email=(p.owner_email or p.email or None),
+        pharmacist_phone=(p.owner_phone or p.phone or None),
         rib=p.rib,
         status=(p.pharmacy_status or "actif"),
         commercial_id=str(p.commercial_id) if p.commercial_id else None,
+        last_visit_at=parse_datetime_iso(p.last_visit_at) if p.last_visit_at else None,
         next_visit_date=p.next_visit_date.isoformat() if p.next_visit_date else None,
         photo_url=p.photo_url,
         payment_mode=_payment_to_api(p.payment_mode),
@@ -121,8 +131,13 @@ def report_orm_to_domain(r: orm.VisitReport) -> VisitReport:
         covering_status=r.covering_status,
         covering_size_to_order=r.covering_size_to_order,
         next_visit_date=nvd,
+        expected_return_iso_year=r.expected_return_iso_year,
+        expected_return_iso_week=r.expected_return_iso_week,
+        voice_note_url=r.voice_note_url,
+        photo_note_url=r.photo_note_url,
+        video_note_url=r.video_note_url,
         delivery_mode=r.delivery_mode,
-        payment_mode=r.payment_mode,
+        payment_mode=_payment_to_api(r.payment_mode),
         notes=r.notes,
         synced=r.synced,
         created_at=parse_datetime_iso(r.created_at) if r.created_at else None,
@@ -185,19 +200,11 @@ def material_orm_to_domain(m: orm.CommercialMaterial) -> CommercialMaterial:
 
 # --- Saisie API (dict) -> champs base ---
 
-PAYMENT_MODE_ALIASES: dict[str, str] = {
-    "encaissement sous 30 jours": "virement_30",
-    "dépôt-vente": "depot_vente",
-    "dépôt vente": "depot_vente",
-    "depot vente": "depot_vente",
-}
-
 
 def normalize_payment_mode_to_db(v: str | None) -> str:
-    if not v:
-        return "virement_30"
-    s = v.strip()
-    return PAYMENT_MODE_ALIASES.get(s.lower(), s)
+    from app.core.payment_modes import normalize_pharmacy_payment_mode
+
+    return normalize_pharmacy_payment_mode(v)
 
 
 def parse_time_hm(value: str | None) -> time | None:

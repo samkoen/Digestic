@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Box,
@@ -11,51 +11,236 @@ import {
   TableHead,
   TableRow,
   Paper,
-  Chip,
   IconButton,
-  CircularProgress,
-  TextField,
-  MenuItem,
   TableSortLabel,
-  InputAdornment,
-  Avatar,
-  Tooltip,
+  TablePagination,
+  LinearProgress,
 } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
 import EditIcon from '@mui/icons-material/Edit'
 import VisibilityIcon from '@mui/icons-material/Visibility'
-import ClearIcon from '@mui/icons-material/Clear'
 import DeleteIcon from '@mui/icons-material/Delete'
+import ViewColumnIcon from '@mui/icons-material/ViewColumn'
 import { format } from 'date-fns'
-import { pharmacyService } from '../../services/pharmacyService'
+import { pharmacyService, fetchPharmacyDistinctCities } from '../../services/pharmacyService'
 import { userService } from '../../services/userService'
-import { visitReportService } from '../../services/visitReportService'
-import { visitService } from '../../services/visitService'
+import { depotService } from '../../services/depotService'
+import { fetchPharmacyTableView, savePharmacyTableView } from '../../services/tableViewService'
 import PharmacyForm from '../../components/PharmacyForm/PharmacyForm'
-import { getPharmacyStatusLabel } from '../../constants/pharmacyStatus'
+import { ResizableHeaderCell } from '../../components/ResizableTableColumns/ResizableHeaderCell'
+import PharmacyColumnPickerDialog from '../../components/PharmacyTable/PharmacyColumnPickerDialog'
+import { PharmacyTableBodyCell } from '../../components/PharmacyTable/PharmacyDataCells'
+import { PharmacyFilterCell } from '../../components/PharmacyTable/PharmacyFilterCells'
+import { PharmacySavedFiltersBar } from '../../components/PharmacyTable/PharmacySavedFiltersBar'
+import { PHARMACY_COLUMN_MIN_PX, PHARM_TABLE_ACTIONS_PX } from '../../constants/pharmacyTableMinWidths'
+import {
+  EMPTY_PHARMACY_FILTERS,
+  buildPharmacyListQueryParams,
+  pharmacyFiltersFromPayload,
+} from '../../utils/pharmacyListQueryParams'
+import {
+  computeResizablePixelWidths,
+  defaultEqualFractions,
+  loadColumnWidthsPx,
+  saveColumnWidthsPx,
+} from '../../utils/pharmacyTableLayoutUtils'
+
+const headerCellTextSx = { fontSize: '0.75rem', fontWeight: 600 }
+
+const DEFAULT_VISIBLE_COLUMNS = [
+  'name',
+  'address',
+  'city',
+  'commercial',
+  'lastVisit',
+  'nextVisit',
+  'status',
+  'rib',
+]
 
 function Pharmacies() {
-  const [pharmacies, setPharmacies] = useState([])
-  const [enrichedPharmacies, setEnrichedPharmacies] = useState([])
-  const [loading, setLoading] = useState(true)
+  const [rows, setRows] = useState([])
+  const [total, setTotal] = useState(0)
+  const [page, setPage] = useState(0)
+  const [rowsPerPage, setRowsPerPage] = useState(10)
+  const [listLoading, setListLoading] = useState(true)
   const [openForm, setOpenForm] = useState(false)
   const [editingPharmacy, setEditingPharmacy] = useState(null)
   const [orderBy, setOrderBy] = useState('name')
   const [order, setOrder] = useState('asc')
   const [commercials, setCommercials] = useState([])
+  const [depots, setDepots] = useState([])
+  const [cityOptions, setCityOptions] = useState([])
   const [user, setUser] = useState(null)
-  const [filters, setFilters] = useState({
-    name: '',
-    address: '',
-    commercial: '',
-    lastVisit: '',
-    nextVisit: '',
-    pharmacyStatus: '',
-  })
+  const [filters, setFilters] = useState(() => ({ ...EMPTY_PHARMACY_FILTERS }))
+  const [debouncedFilters, setDebouncedFilters] = useState(() => ({
+    ...EMPTY_PHARMACY_FILTERS,
+  }))
   const [editingNextVisitId, setEditingNextVisitId] = useState(null)
   const [editingNextVisitValue, setEditingNextVisitValue] = useState('')
   const [shouldSaveOnBlur, setShouldSaveOnBlur] = useState(true)
+  const [colWidthsPx, setColWidthsPx] = useState(null)
+  const [tableWidth, setTableWidth] = useState(0)
+  const [tableView, setTableView] = useState(null)
+  const [columnPickerOpen, setColumnPickerOpen] = useState(false)
+  const [savingColumns, setSavingColumns] = useState(false)
+  const [activeSavedFilterId, setActiveSavedFilterId] = useState(null)
+  const tableWidthRef = useRef(1200)
+  const colResizeObserverRef = useRef(null)
   const navigate = useNavigate()
+
+  const resizableOrder = useMemo(() => {
+    if (tableView?.visibleColumnKeys?.length) {
+      return tableView.visibleColumnKeys
+    }
+    return DEFAULT_VISIBLE_COLUMNS
+  }, [tableView])
+
+  const getColumnLabel = useCallback(
+    (key) => {
+      const d = tableView?.definition?.find((c) => c.key === key)
+      return d?.label || key
+    },
+    [tableView],
+  )
+
+  const setTableContainerRef = useCallback((el) => {
+    if (colResizeObserverRef.current) {
+      colResizeObserverRef.current.disconnect()
+      colResizeObserverRef.current = null
+    }
+    if (!el) {
+      return
+    }
+    const w0 = Math.floor(el.getBoundingClientRect().width)
+    if (w0 > 0) {
+      setTableWidth(w0)
+      tableWidthRef.current = w0
+    }
+    const ro = new ResizeObserver((entries) => {
+      const w = Math.floor(entries[0].contentRect.width)
+      if (w > 0) {
+        setTableWidth(w)
+        tableWidthRef.current = w
+      }
+    })
+    ro.observe(el)
+    colResizeObserverRef.current = ro
+  }, [])
+
+  const { fullWidths, tableMinW } = useMemo(() => {
+    const w = tableWidth > 0 ? tableWidth : tableWidthRef.current
+    const W = Math.max(200, w)
+    if (colWidthsPx) {
+      const sum = resizableOrder.reduce((a, k) => a + (colWidthsPx[k] || 0), 0)
+      const tmin = sum + PHARM_TABLE_ACTIONS_PX
+      return {
+        fullWidths: { ...colWidthsPx, actions: PHARM_TABLE_ACTIONS_PX },
+        tableMinW: Math.max(W, tmin),
+      }
+    }
+    const frac = defaultEqualFractions(resizableOrder)
+    const o = computeResizablePixelWidths(frac, w, PHARMACY_COLUMN_MIN_PX, resizableOrder)
+    return {
+      fullWidths: { ...o.colWidths, actions: o.actions },
+      tableMinW: o.tableMinWidth,
+    }
+  }, [tableWidth, colWidthsPx, resizableOrder])
+
+  const getPairMaxW = useCallback(
+    (key) => {
+      const i = resizableOrder.indexOf(key)
+      if (i < 0 || i >= resizableOrder.length - 1) {
+        return 4000
+      }
+      const b = resizableOrder[i + 1]
+      const minB = PHARMACY_COLUMN_MIN_PX[b] ?? 64
+      return fullWidths[key] + fullWidths[b] - minB
+    },
+    [fullWidths, resizableOrder],
+  )
+
+  const setColWidth = useCallback(
+    (key) => (newAPx) => {
+      setColWidthsPx((prev) => {
+        if (!prev) {
+          return prev
+        }
+        const i = resizableOrder.indexOf(key)
+        if (i < 0 || i >= resizableOrder.length - 1) {
+          return prev
+        }
+        const a = key
+        const b = resizableOrder[i + 1]
+        const minA = PHARMACY_COLUMN_MIN_PX[a] ?? 64
+        const minB = PHARMACY_COLUMN_MIN_PX[b] ?? 64
+        const pair = (prev[a] || 0) + (prev[b] || 0)
+        const newA = Math.max(minA, Math.min(newAPx, pair - minB))
+        const newB = pair - newA
+        if (newA === prev[a] && newB === prev[b]) {
+          return prev
+        }
+        return { ...prev, [a]: newA, [b]: newB }
+      })
+    },
+    [resizableOrder],
+  )
+
+  const resizableKeyStr = resizableOrder.join(',')
+  const resizableKeyStrPrev = useRef(null)
+
+  useEffect(() => {
+    if (resizableKeyStrPrev.current === null) {
+      resizableKeyStrPrev.current = resizableKeyStr
+      return
+    }
+    if (resizableKeyStrPrev.current !== resizableKeyStr) {
+      resizableKeyStrPrev.current = resizableKeyStr
+      setColWidthsPx(null)
+    }
+  }, [resizableKeyStr])
+
+  useEffect(() => {
+    if (tableWidth < 1 || colWidthsPx !== null) {
+      return
+    }
+    const W = Math.max(200, tableWidth)
+    const saved = loadColumnWidthsPx(resizableOrder)
+    if (saved && resizableOrder.length) {
+      const s0 = resizableOrder.reduce((a, k) => a + (saved[k] || 0), 0)
+      if (s0 < 1) {
+        setColWidthsPx(
+          computeResizablePixelWidths(
+            defaultEqualFractions(resizableOrder),
+            W,
+            PHARMACY_COLUMN_MIN_PX,
+            resizableOrder,
+          ).colWidths,
+        )
+        return
+      }
+      const frac = Object.fromEntries(
+        resizableOrder.map((k) => [k, (saved[k] || 0) / s0]),
+      )
+      setColWidthsPx(computeResizablePixelWidths(frac, W, PHARMACY_COLUMN_MIN_PX, resizableOrder).colWidths)
+    } else {
+      setColWidthsPx(
+        computeResizablePixelWidths(
+          defaultEqualFractions(resizableOrder),
+          W,
+          PHARMACY_COLUMN_MIN_PX,
+          resizableOrder,
+        ).colWidths,
+      )
+    }
+  }, [tableWidth, colWidthsPx, resizableKeyStr, resizableOrder])
+
+  useEffect(() => {
+    if (!colWidthsPx || !resizableOrder.length) {
+      return
+    }
+    saveColumnWidthsPx(resizableOrder, colWidthsPx)
+  }, [colWidthsPx, resizableKeyStr, resizableOrder])
 
   const getPhotoPreviewUrl = (pharmacy, size = 120) => {
     const seed = encodeURIComponent(pharmacy.id ?? pharmacy.name ?? 'pharmacy-photo')
@@ -70,137 +255,205 @@ function Pharmacies() {
   }, [])
 
   useEffect(() => {
-    fetchPharmacies()
-    fetchCommercials()
+    let c = true
+    ;(async () => {
+      try {
+        const d = await fetchPharmacyTableView()
+        if (c) {
+          setTableView(d)
+        }
+      } catch (e) {
+        console.error(e)
+        if (c) {
+          setTableView({
+            viewKey: 'pharmacies',
+            definition: [],
+            visibleColumnKeys: DEFAULT_VISIBLE_COLUMNS,
+          })
+        }
+      }
+    })()
+    return () => {
+      c = false
+    }
   }, [])
 
-  const fetchCommercials = async () => {
-    try {
-      const data = await userService.getAll('commercial')
-      setCommercials(data || [])
-    } catch (error) {
-      console.error('Erreur lors du chargement des commerciaux:', error)
-    }
-  }
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedFilters((prev) => {
+        const next = { ...filters }
+        if (JSON.stringify(prev) === JSON.stringify(next)) {
+          return prev
+        }
+        return next
+      })
+    }, 400)
+    return () => clearTimeout(t)
+  }, [filters])
 
-  const fetchPharmacies = async () => {
+  const loadData = useCallback(async () => {
+    setListLoading(true)
     try {
-      setLoading(true)
-      setEnrichedPharmacies([]) // Réinitialiser
-      const data = await pharmacyService.getAll()
-      setPharmacies(data)
-      
-      // Enrichir les données avec les informations des commerciaux et visites
-      if (data && data.length > 0) {
-        await enrichPharmaciesData(data)
-      } else {
-        setEnrichedPharmacies([])
-      }
+      const data = await pharmacyService.getList(
+        buildPharmacyListQueryParams({
+          page,
+          rowsPerPage,
+          orderBy,
+          order,
+          debouncedFilters,
+        }),
+      )
+      setRows(
+        (data.items || []).map((p) => ({
+          ...p,
+          lastVisitDate: p.last_visit_at,
+          nextVisitDate: p.next_visit_date,
+        })),
+      )
+      setTotal(data.total ?? 0)
     } catch (error) {
       console.error('Error fetching pharmacies:', error)
-      setEnrichedPharmacies([])
+      setRows([])
+      setTotal(0)
     } finally {
-      setLoading(false)
+      setListLoading(false)
     }
-  }
+  }, [page, rowsPerPage, orderBy, order, debouncedFilters])
 
-  const enrichPharmaciesData = async (pharmaciesData) => {
-    try {
-      // Récupérer uniquement les commerciaux (pas l'admin) pour mapper les IDs aux noms
-      const commercialUsers = await userService.getAll('commercial')
-      console.log('Commercial users loaded:', commercialUsers.length, commercialUsers.map(u => `${u.first_name} ${u.last_name} (${u.id})`))
-      const usersMap = new Map(commercialUsers.map(u => [u.id, u]))
-      
-      // Récupérer tous les rapports de visite en une seule fois (plus efficace)
-      const allReports = await visitReportService.getAll()
-      const reportsByPharmacy = new Map()
-      allReports.forEach(report => {
-        if (!reportsByPharmacy.has(report.pharmacy_id)) {
-          reportsByPharmacy.set(report.pharmacy_id, [])
-        }
-        reportsByPharmacy.get(report.pharmacy_id).push(report)
-      })
-      
-      // Récupérer toutes les visites en une seule fois (plus efficace)
-      const allVisits = await visitService.getAll()
-      const visitsByPharmacy = new Map()
-      allVisits.forEach(visit => {
-        if (!visitsByPharmacy.has(visit.pharmacy_id)) {
-          visitsByPharmacy.set(visit.pharmacy_id, [])
-        }
-        visitsByPharmacy.get(visit.pharmacy_id).push(visit)
-      })
-      
-      // Enrichir chaque pharmacie
-      const enriched = pharmaciesData.map((pharmacy) => {
-        // Récupérer le nom du commercial
-        let commercialName = '-'
-        if (pharmacy.commercial_id) {
-          const commercial = usersMap.get(pharmacy.commercial_id)
-          if (commercial) {
-            commercialName = `${commercial.first_name} ${commercial.last_name}`
-          } else {
-            // Debug: commercial non trouvé
-            console.warn(`Commercial not found for pharmacy ${pharmacy.name} (ID: ${pharmacy.commercial_id})`)
-            console.log('Available commercial IDs:', Array.from(usersMap.keys()))
-          }
-        }
-        
-        // Récupérer la dernière visite (rapport de visite)
-        let lastVisitDate = null
-        const pharmacyReports = reportsByPharmacy.get(pharmacy.id) || []
-        if (pharmacyReports.length > 0) {
-          const sortedReports = pharmacyReports
-            .filter(r => r.visit_date)
-            .sort((a, b) => new Date(b.visit_date) - new Date(a.visit_date))
-          
-          if (sortedReports.length > 0) {
-            lastVisitDate = sortedReports[0].visit_date
-          }
-        }
-        
-        // Récupérer la prochaine visite directement depuis le champ de la pharmacie
-        const nextVisitDate = pharmacy.next_visit_date || null
-        
-        return {
-          ...pharmacy,
-          commercialName,
-          lastVisitDate,
-          nextVisitDate,
-        }
-      })
-      
-      console.log('Enriched pharmacies:', enriched.length)
-      if (enriched.length > 0) {
-        console.log('Sample:', {
-          name: enriched[0].name,
-          commercial: enriched[0].commercialName,
-          lastVisit: enriched[0].lastVisitDate,
-          nextVisit: enriched[0].nextVisitDate
-        })
+  useEffect(() => {
+    void loadData()
+  }, [loadData])
+
+  useEffect(() => {
+    const loadCommercials = async () => {
+      try {
+        const data = await userService.getAll('commercial')
+        setCommercials(data || [])
+      } catch (error) {
+        console.error('Erreur lors du chargement des commerciaux:', error)
       }
-      setEnrichedPharmacies(enriched)
-    } catch (error) {
-      console.error('Error enriching pharmacies data:', error)
-      // En cas d'erreur, au moins afficher les pharmacies avec des valeurs par défaut
-      const fallback = pharmaciesData.map(p => ({
-        ...p,
-        commercialName: p.commercial_id ? '-' : '-',
-        lastVisitDate: null,
-        nextVisitDate: null,
-      }))
-      setEnrichedPharmacies(fallback)
     }
-  }
+    const loadDepots = async () => {
+      try {
+        const data = await depotService.list()
+        const list = Array.isArray(data) ? data : []
+        list.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'fr'))
+        setDepots(list)
+      } catch (error) {
+        console.error('Erreur lors du chargement des dépôts:', error)
+        setDepots([])
+      }
+    }
+    void loadCommercials()
+    void loadDepots()
+  }, [])
+
+  useEffect(() => {
+    let c = true
+    ;(async () => {
+      try {
+        const list = await fetchPharmacyDistinctCities()
+        if (c) {
+          setCityOptions(Array.isArray(list) ? list : [])
+        }
+      } catch (e) {
+        console.error(e)
+        if (c) {
+          setCityOptions([])
+        }
+      }
+    })()
+    return () => {
+      c = false
+    }
+  }, [])
 
   const formatDate = (dateString) => {
-    if (!dateString) return '-'
+    if (!dateString) {
+      return '-'
+    }
     try {
       return format(new Date(dateString), 'dd/MM/yyyy')
     } catch {
       return dateString
     }
   }
+
+  const handleNextVisitClick = useCallback((ph) => {
+    setEditingNextVisitId(ph.id)
+    const dateValue = ph.nextVisitDate
+      ? format(new Date(ph.nextVisitDate), 'yyyy-MM-dd')
+      : ''
+    setEditingNextVisitValue(dateValue)
+    setShouldSaveOnBlur(true)
+  }, [])
+
+  const handleNextVisitChange = useCallback((e) => {
+    setEditingNextVisitValue(e.target.value)
+  }, [])
+
+  const handleNextVisitSave = useCallback(
+    async (pharmacyId) => {
+      if (!shouldSaveOnBlur) {
+        setShouldSaveOnBlur(true)
+        return
+      }
+      try {
+        let isoDate = null
+        if (editingNextVisitValue) {
+          const d = new Date(editingNextVisitValue)
+          d.setHours(0, 0, 0, 0)
+          isoDate = d.toISOString()
+        }
+        await pharmacyService.update(pharmacyId, { next_visit_date: isoDate })
+        setEditingNextVisitId(null)
+        setEditingNextVisitValue('')
+        setShouldSaveOnBlur(true)
+        void loadData()
+      } catch (error) {
+        console.error('Erreur lors de la mise à jour de la date:', error)
+        alert('Erreur lors de la mise à jour de la date de prochaine visite')
+        setEditingNextVisitId(null)
+        setEditingNextVisitValue('')
+      }
+    },
+    [shouldSaveOnBlur, editingNextVisitValue, loadData],
+  )
+
+  const handleNextVisitKeyDown = useCallback(
+    (e, pharmacyId) => {
+      if (e.key === 'Enter') {
+        void handleNextVisitSave(pharmacyId)
+      } else if (e.key === 'Escape') {
+        setEditingNextVisitId(null)
+        setEditingNextVisitValue('')
+      }
+    },
+    [handleNextVisitSave],
+  )
+
+  const bodyCtx = useMemo(
+    () => ({
+      getPhotoPreviewUrl,
+      formatDate,
+      editingNextVisitId,
+      editingNextVisitValue,
+      handleNextVisitClick,
+      handleNextVisitChange,
+      handleNextVisitSave,
+      handleNextVisitKeyDown,
+      setShouldSaveOnBlur,
+      setEditingNextVisitValue,
+    }),
+    [
+      editingNextVisitId,
+      editingNextVisitValue,
+      handleNextVisitClick,
+      handleNextVisitChange,
+      handleNextVisitSave,
+      handleNextVisitKeyDown,
+    ],
+  )
 
   const handleCreate = () => {
     setEditingPharmacy(null)
@@ -215,14 +468,14 @@ function Pharmacies() {
   const handleFormClose = () => {
     setOpenForm(false)
     setEditingPharmacy(null)
-    fetchPharmacies()
+    void loadData()
   }
 
   const handleDelete = async (pharmacy) => {
     if (window.confirm(`Êtes-vous sûr de vouloir supprimer la pharmacie "${pharmacy.name}" ?`)) {
       try {
         await pharmacyService.delete(pharmacy.id)
-        fetchPharmacies()
+        void loadData()
       } catch (error) {
         console.error('Error deleting pharmacy:', error)
         alert('Erreur lors de la suppression de la pharmacie')
@@ -231,532 +484,309 @@ function Pharmacies() {
   }
 
   const handleSort = (property) => {
+    setActiveSavedFilterId(null)
+    if (property !== orderBy) {
+      setPage(0)
+    }
     const isAsc = orderBy === property && order === 'asc'
     setOrder(isAsc ? 'desc' : 'asc')
     setOrderBy(property)
   }
 
-  const filteredAndSortedPharmacies = React.useMemo(() => {
-    let data = enrichedPharmacies.length > 0 ? enrichedPharmacies : pharmacies
-    
-    // Appliquer les filtres
-    data = data.filter((pharmacy) => {
-      // Filtre par nom
-      if (filters.name && !pharmacy.name?.toLowerCase().includes(filters.name.toLowerCase())) {
-        return false
-      }
-      
-      // Filtre par adresse
-      const fullAddress = `${pharmacy.address}, ${pharmacy.postal_code} ${pharmacy.city}`.toLowerCase()
-      if (filters.address && !fullAddress.includes(filters.address.toLowerCase())) {
-        return false
-      }
-      
-      // Filtre par commercial (par ID)
-      if (filters.commercial && pharmacy.commercial_id !== filters.commercial) {
-        return false
-      }
-      
-      // Filtre par dernière visite
-      if (filters.lastVisit) {
-        const lastVisitStr = formatDate(pharmacy.lastVisitDate).toLowerCase()
-        if (!lastVisitStr.includes(filters.lastVisit.toLowerCase()) && lastVisitStr !== '-') {
-          return false
-        }
-      }
-      
-      // Filtre par prochaine visite (comparaison de dates)
-      if (filters.nextVisit) {
-        if (!pharmacy.nextVisitDate) {
-          return false // Si pas de date et qu'on filtre, on exclut
-        }
-        const filterDate = new Date(filters.nextVisit)
-        filterDate.setHours(0, 0, 0, 0)
-        const pharmacyDate = new Date(pharmacy.nextVisitDate)
-        pharmacyDate.setHours(0, 0, 0, 0)
-        // Comparer les dates (égalité)
-        if (pharmacyDate.getTime() !== filterDate.getTime()) {
-          return false
-        }
-      }
-      
-      if (filters.pharmacyStatus && pharmacy.status !== filters.pharmacyStatus) {
-        return false
-      }
-      
-      return true
-    })
-    
-    // Appliquer le tri
-    return [...data].sort((a, b) => {
-      let aValue, bValue
-      
-      switch (orderBy) {
-        case 'name':
-          aValue = a.name || ''
-          bValue = b.name || ''
-          break
-        case 'address':
-          aValue = `${a.address}, ${a.postal_code} ${a.city}` || ''
-          bValue = `${b.address}, ${b.postal_code} ${b.city}` || ''
-          break
-        case 'commercial':
-          aValue = a.commercialName || ''
-          bValue = b.commercialName || ''
-          break
-        case 'lastVisit':
-          aValue = a.lastVisitDate ? new Date(a.lastVisitDate).getTime() : 0
-          bValue = b.lastVisitDate ? new Date(b.lastVisitDate).getTime() : 0
-          break
-        case 'nextVisit':
-          aValue = a.nextVisitDate ? new Date(a.nextVisitDate).getTime() : 0
-          bValue = b.nextVisitDate ? new Date(b.nextVisitDate).getTime() : 0
-          break
-        case 'status':
-          aValue = a.status || ''
-          bValue = b.status || ''
-          break
-        default:
-          return 0
-      }
-      
-      if (typeof aValue === 'string' && typeof bValue === 'string') {
-        return order === 'asc' 
-          ? aValue.localeCompare(bValue, 'fr')
-          : bValue.localeCompare(aValue, 'fr')
-      } else {
-        return order === 'asc' ? aValue - bValue : bValue - aValue
-      }
-    })
-  }, [enrichedPharmacies, pharmacies, orderBy, order, filters])
-
   const handleFilterChange = (field, value) => {
-    setFilters(prev => ({
+    setActiveSavedFilterId(null)
+    setPage(0)
+    setFilters((prev) => ({
       ...prev,
-      [field]: value
+      [field]: value,
     }))
   }
 
+  const handleSelectSavedFilter = useCallback((item) => {
+    setPage(0)
+    const pl = item.payload || {}
+    const next = pharmacyFiltersFromPayload(pl.filters)
+    setFilters(next)
+    setDebouncedFilters(next)
+    if (pl.orderBy) {
+      setOrderBy(pl.orderBy)
+    }
+    if (pl.order) {
+      setOrder(pl.order)
+    }
+    setActiveSavedFilterId(item.id)
+  }, [])
+
   const clearFilters = () => {
-    setFilters({
-      name: '',
-      address: '',
-      commercial: '',
-      lastVisit: '',
-      nextVisit: '',
-      pharmacyStatus: '',
-    })
+    setActiveSavedFilterId(null)
+    setPage(0)
+    setFilters({ ...EMPTY_PHARMACY_FILTERS })
+    setDebouncedFilters({ ...EMPTY_PHARMACY_FILTERS })
   }
 
-  const hasActiveFilters = Object.values(filters).some(v => v !== '')
+  const hasActiveFilters = Object.values(filters).some((v) =>
+    Array.isArray(v) ? v.length > 0 : v !== '',
+  )
 
-  const handleNextVisitClick = (pharmacy) => {
-    setEditingNextVisitId(pharmacy.id)
-    // Convertir la date ISO en format YYYY-MM-DD pour l'input date
-    const dateValue = pharmacy.nextVisitDate 
-      ? format(new Date(pharmacy.nextVisitDate), 'yyyy-MM-dd')
-      : ''
-    setEditingNextVisitValue(dateValue)
-    setShouldSaveOnBlur(true)
-  }
-
-  const handleNextVisitChange = (e) => {
-    setEditingNextVisitValue(e.target.value)
-  }
-
-  const handleNextVisitSave = async (pharmacyId) => {
-    if (!shouldSaveOnBlur) {
-      setShouldSaveOnBlur(true)
-      return
-    }
-    
+  const onSaveColumnPicker = async (keys) => {
+    setSavingColumns(true)
     try {
-      // Convertir la date YYYY-MM-DD en ISO format (midnight UTC pour éviter les problèmes de fuseau horaire)
-      let isoDate = null
-      if (editingNextVisitValue) {
-        const date = new Date(editingNextVisitValue)
-        // S'assurer que la date est à minuit pour éviter les problèmes de fuseau horaire
-        date.setHours(0, 0, 0, 0)
-        isoDate = date.toISOString()
-      }
-      
-      await pharmacyService.update(pharmacyId, {
-        next_visit_date: isoDate
-      })
-      
-      // Mettre à jour l'état local
-      setEnrichedPharmacies(prev => 
-        prev.map(p => 
-          p.id === pharmacyId 
-            ? { ...p, nextVisitDate: isoDate }
-            : p
-        )
-      )
-      
-      setEditingNextVisitId(null)
-      setEditingNextVisitValue('')
-      setShouldSaveOnBlur(true)
-    } catch (error) {
-      console.error('Erreur lors de la mise à jour de la date:', error)
-      alert('Erreur lors de la mise à jour de la date de prochaine visite')
-      handleNextVisitCancel()
+      const res = await savePharmacyTableView(keys)
+      setTableView((prev) => ({
+        ...prev,
+        visibleColumnKeys: res.visibleColumnKeys,
+      }))
+      setColWidthsPx(null)
+      setColumnPickerOpen(false)
+    } catch (e) {
+      console.error(e)
+      alert(e?.response?.data?.error || e.message || 'Erreur de sauvegarde')
+    } finally {
+      setSavingColumns(false)
     }
   }
 
-  const handleNextVisitCancel = () => {
-    setEditingNextVisitId(null)
-    setEditingNextVisitValue('')
-    setShouldSaveOnBlur(true)
-  }
-
-  const handleNextVisitKeyDown = (e, pharmacyId) => {
-    if (e.key === 'Enter') {
-      handleNextVisitSave(pharmacyId)
-    } else if (e.key === 'Escape') {
-      handleNextVisitCancel()
-    }
-  }
-
-  if (loading) {
-    return (
-      <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
-        <CircularProgress />
-      </Box>
-    )
-  }
+  const nDataCols = resizableOrder.length
+  const zBase = 20
 
   return (
     <Box>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
         <Typography variant="h4">Pharmacies</Typography>
-        <Box display="flex" gap={2}>
+        <Box display="flex" gap={2} flexWrap="wrap" justifyContent="flex-end">
           {hasActiveFilters && (
-            <Button
-              variant="outlined"
-              onClick={clearFilters}
-              size="small"
-            >
+            <Button variant="outlined" onClick={clearFilters} size="small">
               Réinitialiser filtres
             </Button>
           )}
           {user?.role === 'admin' && (
             <Button
-              variant="contained"
-              startIcon={<AddIcon />}
-              onClick={handleCreate}
+              variant="outlined"
+              startIcon={<ViewColumnIcon />}
+              size="small"
+              onClick={() => setColumnPickerOpen(true)}
             >
+              Colonnes
+            </Button>
+          )}
+          {user?.role === 'admin' && (
+            <Button variant="contained" startIcon={<AddIcon />} onClick={handleCreate}>
               Nouvelle Pharmacie
             </Button>
           )}
         </Box>
       </Box>
 
-      <TableContainer component={Paper}>
-        <Table>
-          <TableHead>
-            {/* Ligne des en-têtes avec tri */}
-            <TableRow>
-              <TableCell>
-                <TableSortLabel
-                  active={orderBy === 'name'}
-                  direction={orderBy === 'name' ? order : 'asc'}
-                  onClick={() => handleSort('name')}
+      {user && (
+        <PharmacySavedFiltersBar
+          filters={filters}
+          orderBy={orderBy}
+          order={order}
+          activeSavedFilterId={activeSavedFilterId}
+          onSelectSaved={handleSelectSavedFilter}
+          onActiveFilterRemoved={() => setActiveSavedFilterId(null)}
+        />
+      )}
+
+      {user?.role === 'admin' && tableView && (
+        <PharmacyColumnPickerDialog
+          open={columnPickerOpen}
+          onClose={() => setColumnPickerOpen(false)}
+          definition={tableView.definition}
+          initialKeys={tableView.visibleColumnKeys}
+          onSave={onSaveColumnPicker}
+          saving={savingColumns}
+        />
+      )}
+
+      <Box ref={setTableContainerRef} sx={{ width: '100%', minWidth: 0 }}>
+        <TableContainer
+          component={Paper}
+          sx={{ position: 'relative', overflowX: 'auto', width: '100%' }}
+        >
+          {listLoading && <LinearProgress sx={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 1 }} />}
+          <Table
+            size="small"
+            sx={{
+              tableLayout: 'fixed',
+              width: '100%',
+              minWidth: tableMinW,
+            }}
+          >
+            <TableHead
+              sx={{
+                overflow: 'visible',
+                '& .MuiTableRow-root': { overflow: 'visible' },
+              }}
+            >
+              <TableRow sx={{ position: 'relative' }}>
+                {resizableOrder.map((colKey, idx) => {
+                  const last = idx === nDataCols - 1
+                  return (
+                    <ResizableHeaderCell
+                      key={colKey}
+                      width={fullWidths[colKey]}
+                      onWidthChange={setColWidth(colKey)}
+                      minWidth={PHARMACY_COLUMN_MIN_PX[colKey] ?? 64}
+                      maxWidth={getPairMaxW(colKey)}
+                      resizable={!last}
+                      stackZIndex={zBase - idx}
+                      sx={headerCellTextSx}
+                    >
+                      <TableSortLabel
+                        active={orderBy === colKey}
+                        direction={orderBy === colKey ? order : 'asc'}
+                        onClick={() => handleSort(colKey)}
+                      >
+                        {getColumnLabel(colKey)}
+                      </TableSortLabel>
+                    </ResizableHeaderCell>
+                  )
+                })}
+                <ResizableHeaderCell
+                  width={fullWidths.actions}
+                  resizable={false}
+                  align="right"
+                  stackZIndex={0}
+                  sx={headerCellTextSx}
                 >
-                  Nom
-                </TableSortLabel>
-              </TableCell>
-              <TableCell>
-                <TableSortLabel
-                  active={orderBy === 'address'}
-                  direction={orderBy === 'address' ? order : 'asc'}
-                  onClick={() => handleSort('address')}
-                >
-                  Adresse
-                </TableSortLabel>
-              </TableCell>
-              <TableCell>
-                <TableSortLabel
-                  active={orderBy === 'commercial'}
-                  direction={orderBy === 'commercial' ? order : 'asc'}
-                  onClick={() => handleSort('commercial')}
-                >
-                  Commercial
-                </TableSortLabel>
-              </TableCell>
-              <TableCell>
-                <TableSortLabel
-                  active={orderBy === 'lastVisit'}
-                  direction={orderBy === 'lastVisit' ? order : 'asc'}
-                  onClick={() => handleSort('lastVisit')}
-                >
-                  Dernière visite
-                </TableSortLabel>
-              </TableCell>
-              <TableCell>
-                <TableSortLabel
-                  active={orderBy === 'nextVisit'}
-                  direction={orderBy === 'nextVisit' ? order : 'asc'}
-                  onClick={() => handleSort('nextVisit')}
-                >
-                  Prochaine visite
-                </TableSortLabel>
-              </TableCell>
-              <TableCell>
-                <TableSortLabel
-                  active={orderBy === 'status'}
-                  direction={orderBy === 'status' ? order : 'asc'}
-                  onClick={() => handleSort('status')}
-                >
-                  Statut
-                </TableSortLabel>
-              </TableCell>
-              <TableCell>RIB</TableCell>
-              <TableCell align="right">Actions</TableCell>
-            </TableRow>
-            {/* Ligne des filtres */}
-            <TableRow>
-              <TableCell>
-                <TextField
-                  value={filters.name}
-                  onChange={(e) => handleFilterChange('name', e.target.value)}
-                  size="small"
-                  placeholder="Filtrer..."
-                  fullWidth
-                  variant="outlined"
-                />
-              </TableCell>
-              <TableCell>
-                <TextField
-                  value={filters.address}
-                  onChange={(e) => handleFilterChange('address', e.target.value)}
-                  size="small"
-                  placeholder="Filtrer..."
-                  fullWidth
-                  variant="outlined"
-                />
-              </TableCell>
-              <TableCell>
-                <TextField
-                  select
-                  value={filters.commercial}
-                  onChange={(e) => handleFilterChange('commercial', e.target.value)}
-                  size="small"
-                  fullWidth
-                  variant="outlined"
-                >
-                  <MenuItem value="">Tous</MenuItem>
-                  {commercials.map((commercial) => (
-                    <MenuItem key={commercial.id} value={commercial.id}>
-                      {commercial.first_name} {commercial.last_name}
-                    </MenuItem>
-                  ))}
-                </TextField>
-              </TableCell>
-              <TableCell>
-                <TextField
-                  value={filters.lastVisit}
-                  onChange={(e) => handleFilterChange('lastVisit', e.target.value)}
-                  size="small"
-                  placeholder="Filtrer..."
-                  fullWidth
-                  variant="outlined"
-                />
-              </TableCell>
-              <TableCell>
-                <TextField
-                  type="date"
-                  value={filters.nextVisit}
-                  onChange={(e) => handleFilterChange('nextVisit', e.target.value)}
-                  size="small"
-                  fullWidth
-                  variant="outlined"
-                  InputLabelProps={{
-                    shrink: true,
-                  }}
-                  inputProps={{
-                    style: { fontSize: '14px' }
-                  }}
-                />
-              </TableCell>
-              <TableCell>
-                <TextField
-                  select
-                  value={filters.pharmacyStatus}
-                  onChange={(e) => handleFilterChange('pharmacyStatus', e.target.value)}
-                  size="small"
-                  fullWidth
-                  variant="outlined"
-                >
-                  <MenuItem value="">Tous</MenuItem>
-                  <MenuItem value="actif">Actif</MenuItem>
-                  <MenuItem value="desactive">Désactivé</MenuItem>
-                  <MenuItem value="standby">Stand by</MenuItem>
-                  <MenuItem value="autre">Autre / libre</MenuItem>
-                </TextField>
-              </TableCell>
-              <TableCell></TableCell>
-              <TableCell align="right"></TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {filteredAndSortedPharmacies.map((pharmacy) => (
-              <TableRow 
-                key={pharmacy.id} 
-                hover
-                onDoubleClick={() => navigate(`/pharmacies/${pharmacy.id}`)}
-                sx={{ cursor: 'pointer' }}
-              >
-              <TableCell>
-                <Box display="flex" alignItems="center" gap={1}>
-                  <Tooltip title={`Photo de ${pharmacy.name}`}>
-                    <Avatar
-                      src={getPhotoPreviewUrl(pharmacy, 120)}
-                      alt={`Photo de ${pharmacy.name}`}
-                      sx={{ width: 48, height: 48 }}
-                    />
-                  </Tooltip>
-                  <Typography variant="body1" fontWeight="medium">
-                    {pharmacy.name}
-                  </Typography>
-                </Box>
-              </TableCell>
-                <TableCell>
-                  {pharmacy.address}, {pharmacy.postal_code} {pharmacy.city}
-                </TableCell>
-                <TableCell>{pharmacy.commercialName || '-'}</TableCell>
-                <TableCell>{formatDate(pharmacy.lastVisitDate)}</TableCell>
+                  Actions
+                </ResizableHeaderCell>
+              </TableRow>
+              <TableRow>
+                {resizableOrder.map((colKey) => (
+                  <PharmacyFilterCell
+                    key={`f-${colKey}`}
+                    columnKey={colKey}
+                    fullWidths={fullWidths}
+                    filters={filters}
+                    onChange={handleFilterChange}
+                    commercials={commercials}
+                    depots={depots}
+                    cityOptions={cityOptions}
+                  />
+                ))}
                 <TableCell
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    if (editingNextVisitId !== pharmacy.id) {
-                      handleNextVisitClick(pharmacy)
-                    }
+                  align="right"
+                  padding="none"
+                  sx={{
+                    width: fullWidths.actions,
+                    minWidth: fullWidths.actions,
+                    maxWidth: fullWidths.actions,
+                    boxSizing: 'border-box',
+                    py: 0.75,
+                    pl: 2,
+                    pr: 2,
+                    ...headerCellTextSx,
+                    whiteSpace: 'nowrap',
                   }}
-                  sx={{ 
-                    cursor: 'pointer',
-                    position: 'relative',
-                    '&:hover': {
-                      backgroundColor: editingNextVisitId === pharmacy.id ? 'transparent' : 'action.hover',
-                    }
-                  }}
+                />
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {rows.length === 0 && !listLoading && (
+                <TableRow>
+                  <TableCell colSpan={nDataCols + 1} align="center">
+                    <Typography color="textSecondary" py={2}>
+                      Aucune pharmacie
+                    </Typography>
+                  </TableCell>
+                </TableRow>
+              )}
+              {rows.map((pharmacy) => (
+                <TableRow
+                  key={pharmacy.id}
+                  hover
+                  onDoubleClick={() => navigate(`/pharmacies/${pharmacy.id}`)}
+                  sx={{ cursor: 'pointer' }}
                 >
-                  {editingNextVisitId === pharmacy.id ? (
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <TextField
-                        type="date"
-                        value={editingNextVisitValue}
-                        onChange={handleNextVisitChange}
-                        onBlur={() => handleNextVisitSave(pharmacy.id)}
-                        onKeyDown={(e) => handleNextVisitKeyDown(e, pharmacy.id)}
-                        onClick={(e) => e.stopPropagation()}
-                        autoFocus
-                        size="small"
-                        InputLabelProps={{
-                          shrink: true,
-                        }}
-                        inputProps={{
-                          style: { fontSize: '14px' }
-                        }}
-                        sx={{
-                          width: '180px',
-                          '& .MuiOutlinedInput-root': {
-                            paddingRight: '8px',
-                          }
-                        }}
-                        InputProps={{
-                          endAdornment: editingNextVisitValue && (
-                            <InputAdornment position="end">
-                              <IconButton
-                                size="small"
-                                onMouseDown={(e) => {
-                                  e.preventDefault()
-                                  e.stopPropagation()
-                                  setShouldSaveOnBlur(false)
-                                }}
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  setEditingNextVisitValue('')
-                                  // Réactiver la sauvegarde après un court délai
-                                  setTimeout(() => {
-                                    setShouldSaveOnBlur(true)
-                                  }, 100)
-                                }}
-                                edge="end"
-                              >
-                                <ClearIcon fontSize="small" />
-                              </IconButton>
-                            </InputAdornment>
-                          ),
-                        }}
-                      />
-                    </Box>
-                  ) : (
-                    <span>{formatDate(pharmacy.nextVisitDate)}</span>
-                  )}
-                </TableCell>
-                <TableCell>
-                  <Chip
-                    label={getPharmacyStatusLabel(pharmacy.status)}
-                    color={pharmacy.status === 'actif' ? 'success' : 'default'}
-                    size="small"
-                    variant="outlined"
-                  />
-                </TableCell>
-                <TableCell>
-                  <Chip
-                    label={pharmacy.rib ? 'Oui' : 'Non'}
-                    color={pharmacy.rib ? 'success' : 'default'}
-                    size="small"
-                  />
-                </TableCell>
-                <TableCell align="right">
-                  <IconButton
-                    size="small"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      navigate(`/pharmacies/${pharmacy.id}`)
+                  {resizableOrder.map((colKey) => (
+                    <PharmacyTableBodyCell
+                      key={`${pharmacy.id}-${colKey}`}
+                      columnKey={colKey}
+                      pharmacy={pharmacy}
+                      fullWidths={fullWidths}
+                      ctx={bodyCtx}
+                    />
+                  ))}
+                  <TableCell
+                    align="right"
+                    padding="none"
+                    sx={{
+                      width: fullWidths.actions,
+                      minWidth: fullWidths.actions,
+                      maxWidth: fullWidths.actions,
+                      boxSizing: 'border-box',
+                      whiteSpace: 'nowrap',
                     }}
                   >
-                    <VisibilityIcon />
-                  </IconButton>
-                  {user?.role === 'admin' && (
-                    <>
+                    <Box
+                      sx={{
+                        display: 'flex',
+                        justifyContent: 'flex-end',
+                        flexWrap: 'nowrap',
+                        gap: 0,
+                        px: 1,
+                        py: 0.5,
+                      }}
+                    >
                       <IconButton
                         size="small"
                         onClick={(e) => {
                           e.stopPropagation()
-                          handleEdit(pharmacy)
+                          navigate(`/pharmacies/${pharmacy.id}`)
                         }}
                       >
-                        <EditIcon />
+                        <VisibilityIcon />
                       </IconButton>
-                      <IconButton
-                        size="small"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleDelete(pharmacy)
-                        }}
-                        color="error"
-                      >
-                        <DeleteIcon />
-                      </IconButton>
-                    </>
-                  )}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </TableContainer>
+                      {user?.role === 'admin' && (
+                        <>
+                          <IconButton
+                            size="small"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleEdit(pharmacy)
+                            }}
+                          >
+                            <EditIcon />
+                          </IconButton>
+                          <IconButton
+                            size="small"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleDelete(pharmacy)
+                            }}
+                            color="error"
+                          >
+                            <DeleteIcon />
+                          </IconButton>
+                        </>
+                      )}
+                    </Box>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+          <TablePagination
+            component="div"
+            count={total}
+            page={page}
+            onPageChange={(_, newPage) => setPage(newPage)}
+            rowsPerPage={rowsPerPage}
+            onRowsPerPageChange={(e) => {
+              setRowsPerPage(parseInt(e.target.value, 10))
+              setPage(0)
+            }}
+            rowsPerPageOptions={[10, 25, 50, 100]}
+            labelRowsPerPage="Lignes par page"
+          />
+        </TableContainer>
+      </Box>
 
-      <PharmacyForm
-        open={openForm}
-        onClose={handleFormClose}
-        pharmacy={editingPharmacy}
-      />
+      <PharmacyForm open={openForm} onClose={handleFormClose} pharmacy={editingPharmacy} />
     </Box>
   )
 }
 
 export default Pharmacies
-

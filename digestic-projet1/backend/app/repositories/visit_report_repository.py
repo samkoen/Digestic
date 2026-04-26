@@ -64,8 +64,13 @@ class VisitReportRepository:
             covering_status=model.covering_status,
             covering_size_to_order=model.covering_size_to_order,
             next_visit_date=nvd,
+            expected_return_iso_year=model.expected_return_iso_year,
+            expected_return_iso_week=model.expected_return_iso_week,
+            voice_note_url=model.voice_note_url,
+            photo_note_url=model.photo_note_url,
+            video_note_url=model.video_note_url,
             delivery_mode=model.delivery_mode,
-            payment_mode=model.payment_mode,
+            payment_mode=mp.normalize_payment_mode_to_db(model.payment_mode),
             notes=model.notes,
             synced=model.synced,
         )
@@ -98,8 +103,13 @@ class VisitReportRepository:
         row.next_visit_date = (
             mp.parse_date(model.next_visit_date) if model.next_visit_date else None
         )
+        row.expected_return_iso_year = model.expected_return_iso_year
+        row.expected_return_iso_week = model.expected_return_iso_week
+        row.voice_note_url = model.voice_note_url
+        row.photo_note_url = model.photo_note_url
+        row.video_note_url = model.video_note_url
         row.delivery_mode = model.delivery_mode
-        row.payment_mode = model.payment_mode
+        row.payment_mode = mp.normalize_payment_mode_to_db(model.payment_mode)
         row.notes = model.notes
         row.synced = model.synced
         self._db.flush()

@@ -326,7 +326,7 @@ def _row_to_orm(
         commercial_id=cid,
         has_rib=has_rib,
         rib=rib,
-        payment_mode="virement_30",
+        payment_mode="virement 30 jours",
         gocardless_customer_id=gc[:255] if gc else None,
         gocardless_mandate_id=sm[:255] if sm else None,
         pharmacy_status=_pharmacy_status_from_sage_type_column(_get(row, "TYPE")),

@@ -1,10 +1,12 @@
 import api from './api'
 
 export const authService = {
-  login: async (email) => {
-    const response = await api.post('/auth/login', { email }, {
-      withCredentials: true
-    })
+  login: async (email, password) => {
+    const response = await api.post(
+      '/auth/login',
+      { email, password },
+      { withCredentials: true }
+    )
     return response.data
   },
 

@@ -132,9 +132,11 @@ MARSEILLE_COORDS = [
 PHARMACIST_FIRST_NAMES = ["Jean", "Marie", "Pierre", "Sophie", "Luc", "Claire", "Antoine", "Julie", "Thomas", "Camille"]
 PHARMACIST_LAST_NAMES = ["Martin", "Bernard", "Dubois", "Thomas", "Robert", "Petit", "Durand", "Leroy", "Moreau", "Simon"]
 PAYMENT_MODES = [
-    "encaissement sous 30 jours",
-    "dépôt-vente",
-    "encaissement sous 60 jours",
+    "prélèvement SEPA 30 jours",
+    "prélèvement SEPA 60 jours",
+    "virement 30 jours",
+    "virement 60 jours",
+    "dépôt vente",
 ]
 
 def build_photo_url(name: str) -> str:
@@ -232,6 +234,7 @@ def generate_pharmacies(users):
             "commercial_id": commercial_id,  # Ajout du commercial assigné
             "photo_url": build_photo_url(name),
             "payment_mode": random.choice(PAYMENT_MODES),
+            "rib": f"FR76 3000 1000 0100 0000 0{i:03d} 12{i % 9}",
             "status": "actif",
             "created_at": now,
             "updated_at": now
@@ -260,6 +263,7 @@ def generate_pharmacies(users):
             "commercial_id": aaron_id,  # Toutes les pharmacies de Marseille à Aaron
             "photo_url": photo_url,
             "payment_mode": random.choice(PAYMENT_MODES),
+            "rib": f"FR76 3000 2000 0200 0000 0{i:03d} 23{i % 9}",
             "status": "actif",
             "created_at": now,
             "updated_at": now
@@ -341,7 +345,7 @@ def generate_visit_reports(visits, pharmacies):
             "covering_size_to_order": random.choice(covering_sizes) if random.random() < 0.3 else None,
             "next_visit_date": next_visit_date.isoformat(),
             "notes": f"Visite productive. {random.choice(['Client satisfait', 'Demande de réassort', 'Nouveau contact', 'Suivi nécessaire'])}",
-            "payment_mode": pharmacy.get("payment_mode") or PAYMENT_MODES[0],
+            "payment_mode": pharmacy.get("payment_mode") or "virement 30 jours",
             "synced": True,
             "created_at": visit_date.isoformat(),
             "updated_at": visit_date.isoformat()

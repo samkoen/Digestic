@@ -5,7 +5,6 @@ import {
   DialogContent,
   DialogActions,
   Button,
-  TextField,
   Grid,
   MenuItem,
   InputAdornment,
@@ -15,10 +14,16 @@ import {
   Box,
 } from '@mui/material'
 import ClearIcon from '@mui/icons-material/Clear'
-import { PAYMENT_MODES, DEFAULT_PAYMENT_MODE } from '../../constants/paymentModes'
+import {
+  PAYMENT_MODES,
+  DEFAULT_PAYMENT_MODE,
+  isPrelevementSepa,
+} from '../../constants/paymentModes'
 import { PHARMACY_STATUS_OPTIONS, getPharmacyStatusLabel } from '../../constants/pharmacyStatus'
 import { pharmacyService } from '../../services/pharmacyService'
 import { userService } from '../../services/userService'
+import { depotService } from '../../services/depotService'
+import ResizableTextField from '../ResizableTextField/ResizableTextField'
 
 function PharmacyForm({ open, onClose, pharmacy }) {
   const [formData, setFormData] = useState({
@@ -34,13 +39,25 @@ function PharmacyForm({ open, onClose, pharmacy }) {
     photo_url: '',
     payment_mode: DEFAULT_PAYMENT_MODE,
     status: 'actif',
+    warehouse_id: '',
   })
   const [loading, setLoading] = useState(false)
   const [commercials, setCommercials] = useState([])
+  const [depots, setDepots] = useState([])
+  const [ribError, setRibError] = useState('')
 
   useEffect(() => {
     if (open) {
       fetchCommercials()
+      const loadDepots = async () => {
+        try {
+          const data = await depotService.list()
+          setDepots(Array.isArray(data) ? data : [])
+        } catch (e) {
+          setDepots([])
+        }
+      }
+      loadDepots()
     }
   }, [open])
 
@@ -59,6 +76,7 @@ function PharmacyForm({ open, onClose, pharmacy }) {
         photo_url: pharmacy.photo_url || '',
         payment_mode: pharmacy.payment_mode || DEFAULT_PAYMENT_MODE,
         status: pharmacy.status || 'actif',
+        warehouse_id: pharmacy.warehouse_id || '',
       })
     } else {
       setFormData({
@@ -74,6 +92,7 @@ function PharmacyForm({ open, onClose, pharmacy }) {
         photo_url: '',
         payment_mode: DEFAULT_PAYMENT_MODE,
         status: 'actif',
+        warehouse_id: '',
       })
     }
   }, [pharmacy, open])
@@ -89,6 +108,9 @@ function PharmacyForm({ open, onClose, pharmacy }) {
 
   const handleChange = (e) => {
     const { name, value } = e.target
+    if (name === 'rib' || name === 'payment_mode') {
+      setRibError('')
+    }
     setFormData((prev) => ({
       ...prev,
       [name]: value,
@@ -104,8 +126,13 @@ function PharmacyForm({ open, onClose, pharmacy }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+    if (isPrelevementSepa(formData.payment_mode) && !(formData.rib || '').trim()) {
+      setRibError('Le RIB est obligatoire pour un prélèvement SEPA.')
+      return
+    }
     try {
       setLoading(true)
+      setRibError('')
       const data = {
         ...formData,
         commercial_id: formData.commercial_id || null,
@@ -135,7 +162,7 @@ function PharmacyForm({ open, onClose, pharmacy }) {
         <DialogContent>
           <Grid container spacing={2} sx={{ mt: 1 }}>
             <Grid item xs={12}>
-              <TextField
+              <ResizableTextField
                 fullWidth
                 required
                 label="Nom de la pharmacie"
@@ -145,7 +172,7 @@ function PharmacyForm({ open, onClose, pharmacy }) {
               />
             </Grid>
             <Grid item xs={12} sm={8}>
-              <TextField
+              <ResizableTextField
                 fullWidth
                 required
                 label="Adresse"
@@ -155,7 +182,7 @@ function PharmacyForm({ open, onClose, pharmacy }) {
               />
             </Grid>
             <Grid item xs={12} sm={4}>
-              <TextField
+              <ResizableTextField
                 fullWidth
                 required
                 label="Code postal"
@@ -165,7 +192,7 @@ function PharmacyForm({ open, onClose, pharmacy }) {
               />
             </Grid>
             <Grid item xs={12} sm={6}>
-              <TextField
+              <ResizableTextField
                 fullWidth
                 required
                 label="Ville"
@@ -175,7 +202,7 @@ function PharmacyForm({ open, onClose, pharmacy }) {
               />
             </Grid>
             <Grid item xs={12} sm={6}>
-              <TextField
+              <ResizableTextField
                 fullWidth
                 select
                 label="Statut (Sage : TYPE)"
@@ -195,10 +222,10 @@ function PharmacyForm({ open, onClose, pharmacy }) {
                       {getPharmacyStatusLabel(formData.status)} ({formData.status})
                     </MenuItem>
                   )}
-              </TextField>
+              </ResizableTextField>
             </Grid>
             <Grid item xs={12} sm={6}>
-              <TextField
+              <ResizableTextField
                 fullWidth
                 select
                 label="Mode de paiement (dépôt)"
@@ -211,10 +238,10 @@ function PharmacyForm({ open, onClose, pharmacy }) {
                     {mode}
                   </MenuItem>
                 ))}
-              </TextField>
+              </ResizableTextField>
             </Grid>
             <Grid item xs={12} sm={6}>
-              <TextField
+              <ResizableTextField
                 fullWidth
                 select
                 label="Commercial"
@@ -228,10 +255,31 @@ function PharmacyForm({ open, onClose, pharmacy }) {
                     {commercial.first_name} {commercial.last_name}
                   </MenuItem>
                 ))}
-              </TextField>
+              </ResizableTextField>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <ResizableTextField
+                fullWidth
+                select
+                label="Dépôt d&apos;alimentation"
+                name="warehouse_id"
+                value={formData.warehouse_id}
+                onChange={handleChange}
+                helperText="Laissez vide pour le dépôt par défaut (création)"
+              >
+                <MenuItem value="">
+                  {depots.length ? 'Par défaut' : '— (chargement ou liste vide)'}
+                </MenuItem>
+                {depots.map((d) => (
+                  <MenuItem key={d.id} value={d.id}>
+                    {d.name}
+                    {d.city ? ` — ${d.city}` : ''}
+                  </MenuItem>
+                ))}
+              </ResizableTextField>
             </Grid>
             <Grid item xs={12} sm={4}>
-              <TextField
+              <ResizableTextField
                 fullWidth
                 label="Nom du pharmacien"
                 name="pharmacist_name"
@@ -240,7 +288,7 @@ function PharmacyForm({ open, onClose, pharmacy }) {
               />
             </Grid>
             <Grid item xs={12} sm={4}>
-              <TextField
+              <ResizableTextField
                 fullWidth
                 label="Email"
                 name="pharmacist_email"
@@ -250,7 +298,7 @@ function PharmacyForm({ open, onClose, pharmacy }) {
               />
             </Grid>
             <Grid item xs={12} sm={4}>
-              <TextField
+              <ResizableTextField
                 fullWidth
                 label="Téléphone"
                 name="pharmacist_phone"
@@ -265,7 +313,7 @@ function PharmacyForm({ open, onClose, pharmacy }) {
                 gap={2}
                 sx={{ flexWrap: 'wrap' }}
               >
-                <TextField
+                <ResizableTextField
                   fullWidth
                   label="URL de la photo"
                   name="photo_url"
@@ -298,12 +346,15 @@ function PharmacyForm({ open, onClose, pharmacy }) {
               </Box>
             </Grid>
             <Grid item xs={12}>
-              <TextField
+              <ResizableTextField
                 fullWidth
+                required={isPrelevementSepa(formData.payment_mode)}
                 label="RIB (Relevé d'Identité Bancaire)"
                 name="rib"
                 value={formData.rib}
                 onChange={handleChange}
+                error={!!ribError}
+                helperText={ribError || (isPrelevementSepa(formData.payment_mode) ? 'Obligatoire pour un prélèvement SEPA' : '')}
                 placeholder="Ex: FR76 XXXX XXXX XXXX XXXX XXXX XXX"
               />
             </Grid>

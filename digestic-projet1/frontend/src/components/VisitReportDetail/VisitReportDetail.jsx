@@ -22,6 +22,12 @@ import { format } from 'date-fns'
 import EditIcon from '@mui/icons-material/Edit'
 import SaveIcon from '@mui/icons-material/Save'
 import CancelIcon from '@mui/icons-material/Cancel'
+import { visitReportService } from '../../services/visitReportService'
+import {
+  WEEKS_UNTIL_RETURN_OPTIONS,
+  formatExpectedReturnIso,
+  getVisitNotCompletedReasonLabel,
+} from '../../constants/visitReportForm'
 
 function VisitReportDetail({ open, onClose, report, onUpdate }) {
   const [isEditing, setIsEditing] = useState(false)
@@ -37,23 +43,33 @@ function VisitReportDetail({ open, onClose, report, onUpdate }) {
     covering_status: 'unknown',
     covering_size_to_order: '',
     next_visit_date: '',
+    weeks_until_return: '',
+    voice_note_url: '',
+    photo_note_url: '',
+    video_note_url: '',
     delivery_mode: 'normal',
     notes: '',
   })
 
   useEffect(() => {
     if (report) {
-      // Initialiser le formulaire avec les données du rapport
       setFormData({
+        visit_status: report.visit_status || 'completed',
+        visit_not_completed_reason: report.visit_not_completed_reason || '',
         has_deposit: report.has_deposit || false,
         bottles_deposited: report.bottles_deposited || 0,
+        free_units: report.free_units || 0,
         stock_status: report.stock_status || 'unknown',
         display_stand_status: report.display_stand_status || 'unknown',
         covering_status: report.covering_status || 'unknown',
         covering_size_to_order: report.covering_size_to_order || '',
-        next_visit_date: report.next_visit_date 
-          ? format(new Date(report.next_visit_date), 'yyyy-MM-dd') 
+        next_visit_date: report.next_visit_date
+          ? format(new Date(report.next_visit_date), 'yyyy-MM-dd')
           : '',
+        weeks_until_return: '',
+        voice_note_url: report.voice_note_url || '',
+        photo_note_url: report.photo_note_url || '',
+        video_note_url: report.video_note_url || '',
         delivery_mode: report.delivery_mode || 'normal',
         notes: report.notes || '',
       })
@@ -118,13 +134,42 @@ function VisitReportDetail({ open, onClose, report, onUpdate }) {
     }))
   }
 
+  const handleMediaUpload = async (field) => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    if (field === 'voice_note_url') {
+      input.accept = 'audio/*'
+    } else if (field === 'photo_note_url') {
+      input.accept = 'image/*'
+    } else {
+      input.accept = 'video/*'
+    }
+    input.onchange = async (ev) => {
+      const file = ev.target?.files?.[0]
+      if (!file) return
+      try {
+        const url = await visitReportService.uploadMedia(file)
+        setFormData((prev) => ({ ...prev, [field]: url }))
+      } catch (err) {
+        console.error(err)
+        alert("Échec de l'envoi du fichier")
+      }
+    }
+    input.click()
+  }
+
   const handleSave = async () => {
     try {
       setLoading(true)
+      const { weeks_until_return, next_visit_date: _nvd, ...rest } = formData
       const updateData = {
-        ...formData,
-        // Ne pas inclure next_visit_date car elle n'est plus modifiable
-        next_visit_date: report.next_visit_date || null,
+        ...rest,
+        voice_note_url: formData.voice_note_url || null,
+        photo_note_url: formData.photo_note_url || null,
+        video_note_url: formData.video_note_url || null,
+      }
+      if (weeks_until_return) {
+        updateData.weeks_until_return = parseInt(weeks_until_return, 10)
       }
       if (onUpdate) {
         await onUpdate(report.id, updateData)
@@ -139,7 +184,6 @@ function VisitReportDetail({ open, onClose, report, onUpdate }) {
   }
 
   const handleCancel = () => {
-    // Réinitialiser le formulaire avec les données originales
     if (report) {
       setFormData({
         visit_status: report.visit_status || 'completed',
@@ -151,9 +195,13 @@ function VisitReportDetail({ open, onClose, report, onUpdate }) {
         display_stand_status: report.display_stand_status || 'unknown',
         covering_status: report.covering_status || 'unknown',
         covering_size_to_order: report.covering_size_to_order || '',
-        next_visit_date: report.next_visit_date 
-          ? format(new Date(report.next_visit_date), 'yyyy-MM-dd') 
+        next_visit_date: report.next_visit_date
+          ? format(new Date(report.next_visit_date), 'yyyy-MM-dd')
           : '',
+        weeks_until_return: '',
+        voice_note_url: report.voice_note_url || '',
+        photo_note_url: report.photo_note_url || '',
+        video_note_url: report.video_note_url || '',
         delivery_mode: report.delivery_mode || 'normal',
         notes: report.notes || '',
       })
@@ -178,8 +226,16 @@ function VisitReportDetail({ open, onClose, report, onUpdate }) {
           )}
         </Box>
       </DialogTitle>
-      <DialogContent>
-        <Box sx={{ mt: 2 }}>
+      <DialogContent
+        sx={{
+          pt: 2.75,
+          '& .MuiTextField-root .MuiInputLabel-root': {
+            lineHeight: 1.25,
+            paddingTop: '1px',
+          },
+        }}
+      >
+        <Box sx={{ mt: 0 }}>
           <Card variant="outlined" sx={{ mb: 2 }}>
             <CardContent>
               <Typography variant="h6" gutterBottom>
@@ -197,24 +253,54 @@ function VisitReportDetail({ open, onClose, report, onUpdate }) {
                 </Grid>
                 <Grid item xs={12} sm={6}>
                   <Typography variant="body2" color="text.secondary">
-                    Prochaine visite
+                    Retour prévu
                   </Typography>
                   <Typography variant="body1" fontWeight="medium">
-                    {report.next_visit_date ? formatDate(report.next_visit_date) : '-'}
+                    {formatExpectedReturnIso(
+                      report.expected_return_iso_year,
+                      report.expected_return_iso_week
+                    ) ||
+                      (report.next_visit_date
+                        ? format(new Date(report.next_visit_date), 'dd/MM/yyyy')
+                        : '—')}
                   </Typography>
                 </Grid>
+                {isEditing && (
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      fullWidth
+                      select
+                      label="Nouvelle semaine de retour (optionnel)"
+                      name="weeks_until_return"
+                      value={formData.weeks_until_return}
+                      onChange={handleChange}
+                      InputLabelProps={{ shrink: true }}
+                    >
+                      <MenuItem value="">— inchangé</MenuItem>
+                      {WEEKS_UNTIL_RETURN_OPTIONS.map((o) => (
+                        <MenuItem key={o.value} value={o.value}>
+                          {o.label}
+                        </MenuItem>
+                      ))}
+                    </TextField>
+                  </Grid>
+                )}
                 <Grid item xs={12} sm={6}>
-                  <Typography variant="body2" color="text.secondary">
-                    Statut de la visite
-                  </Typography>
+                  {!isEditing && (
+                    <Typography variant="body2" color="text.secondary">
+                      Statut de la visite
+                    </Typography>
+                  )}
                   {isEditing ? (
                     <TextField
                       fullWidth
                       select
+                      label="Statut de la visite"
                       name="visit_status"
                       value={formData.visit_status}
                       onChange={handleChange}
-                      sx={{ mt: 1 }}
+                      sx={{ mt: 0.5 }}
+                      InputLabelProps={{ shrink: true }}
                     >
                       <MenuItem value="completed">Effectuée</MenuItem>
                       <MenuItem value="not_completed">Non effectuée</MenuItem>
@@ -230,28 +316,29 @@ function VisitReportDetail({ open, onClose, report, onUpdate }) {
                 </Grid>
                 {(isEditing ? formData.visit_status === 'not_completed' : report.visit_status === 'not_completed') && (
                   <Grid item xs={12} sm={6}>
-                    <Typography variant="body2" color="text.secondary">
-                      Raison
-                    </Typography>
+                    {!isEditing && (
+                      <Typography variant="body2" color="text.secondary">
+                        Raison
+                      </Typography>
+                    )}
                     {isEditing ? (
                       <TextField
                         fullWidth
                         select
+                        label="Raison"
                         name="visit_not_completed_reason"
                         value={formData.visit_not_completed_reason}
                         onChange={handleChange}
-                        sx={{ mt: 1 }}
+                        sx={{ mt: 0.5 }}
+                        InputLabelProps={{ shrink: true }}
                       >
                         <MenuItem value="pharmacy_closed">Pharmacie fermée</MenuItem>
                         <MenuItem value="owner_absent">Titulaire absent</MenuItem>
+                        <MenuItem value="refus">Refus</MenuItem>
                       </TextField>
                     ) : (
                       <Typography variant="body1" fontWeight="medium" sx={{ mt: 1 }}>
-                        {report.visit_not_completed_reason === 'pharmacy_closed' 
-                          ? 'Pharmacie fermée' 
-                          : report.visit_not_completed_reason === 'owner_absent'
-                          ? 'Titulaire absent'
-                          : '-'}
+                        {getVisitNotCompletedReasonLabel(report.visit_not_completed_reason)}
                       </Typography>
                     )}
                   </Grid>
@@ -475,6 +562,84 @@ function VisitReportDetail({ open, onClose, report, onUpdate }) {
             </CardContent>
           </Card>
 
+          <Card variant="outlined" sx={{ mb: 2 }}>
+            <CardContent>
+              <Typography variant="h6" gutterBottom>
+                Pièces jointes
+              </Typography>
+              <Divider sx={{ mb: 2 }} />
+              {isEditing && (
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 2 }}>
+                  <Button type="button" size="small" variant="outlined" onClick={() => handleMediaUpload('voice_note_url')}>
+                    Note vocale
+                  </Button>
+                  <Button type="button" size="small" variant="outlined" onClick={() => handleMediaUpload('photo_note_url')}>
+                    Photo
+                  </Button>
+                  <Button type="button" size="small" variant="outlined" onClick={() => handleMediaUpload('video_note_url')}>
+                    Vidéo
+                  </Button>
+                </Box>
+              )}
+              {(isEditing ? formData.voice_note_url : report.voice_note_url) && (
+                <Box sx={{ mb: 2 }}>
+                  <Typography variant="caption" color="text.secondary">
+                    Audio
+                  </Typography>
+                  <audio
+                    controls
+                    src={isEditing ? formData.voice_note_url : report.voice_note_url}
+                    style={{ display: 'block', maxWidth: '100%' }}
+                  />
+                  {isEditing && (
+                    <Button size="small" onClick={() => setFormData((p) => ({ ...p, voice_note_url: '' }))}>
+                      Retirer
+                    </Button>
+                  )}
+                </Box>
+              )}
+              {(isEditing ? formData.photo_note_url : report.photo_note_url) && (
+                <Box sx={{ mb: 2 }}>
+                  <Typography variant="caption" color="text.secondary">
+                    Photo
+                  </Typography>
+                  <Box
+                    component="img"
+                    src={isEditing ? formData.photo_note_url : report.photo_note_url}
+                    alt="Note photo"
+                    sx={{ maxHeight: 160, display: 'block' }}
+                  />
+                  {isEditing && (
+                    <Button size="small" onClick={() => setFormData((p) => ({ ...p, photo_note_url: '' }))}>
+                      Retirer
+                    </Button>
+                  )}
+                </Box>
+              )}
+              {(isEditing ? formData.video_note_url : report.video_note_url) && (
+                <Box sx={{ mb: 1 }}>
+                  <Typography variant="caption" color="text.secondary">
+                    Vidéo
+                  </Typography>
+                  <video
+                    src={isEditing ? formData.video_note_url : report.video_note_url}
+                    controls
+                    style={{ maxWidth: '100%', maxHeight: 220 }}
+                  />
+                  {isEditing && (
+                    <Button size="small" onClick={() => setFormData((p) => ({ ...p, video_note_url: '' }))}>
+                      Retirer
+                    </Button>
+                  )}
+                </Box>
+              )}
+              {!isEditing &&
+                !report.voice_note_url &&
+                !report.photo_note_url &&
+                !report.video_note_url && <Typography color="text.secondary">—</Typography>}
+            </CardContent>
+          </Card>
+
           <Card variant="outlined">
             <CardContent>
               <Typography variant="h6" gutterBottom>
@@ -485,7 +650,7 @@ function VisitReportDetail({ open, onClose, report, onUpdate }) {
                 <TextField
                   fullWidth
                   multiline
-                  rows={4}
+                  rows={2}
                   name="notes"
                   value={formData.notes}
                   onChange={handleChange}

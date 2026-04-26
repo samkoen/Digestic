@@ -26,9 +26,12 @@ def login(
         if not data:
             return JSONResponse({"error": "Données manquantes"}, status_code=400)
         email = data.get("email")
+        password = data.get("password")
         if not email:
             return JSONResponse({"error": "Email requis"}, status_code=400)
-        user = service.authenticate(email)
+        if password is None or str(password).strip() == "":
+            return JSONResponse({"error": "Mot de passe requis"}, status_code=400)
+        user = service.authenticate(str(email).strip(), str(password))
         if not user:
             return JSONResponse(
                 {"error": "Email ou mot de passe incorrect"},

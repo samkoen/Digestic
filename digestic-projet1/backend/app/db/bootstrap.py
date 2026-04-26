@@ -19,6 +19,8 @@ def get_or_create_default_warehouse_id(db: Session) -> uuid.UUID:
         name=DEFAULT_WAREHOUSE_NAME,
         country="FR",
         is_active=True,
+        depot_type="central",
+        quantity=0,
     )
     db.add(w)
     db.flush()

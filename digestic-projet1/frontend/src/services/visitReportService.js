@@ -25,6 +25,23 @@ export const visitReportService = {
     const response = await api.post('/visit-reports/sync')
     return response.data
   },
+
+  /** @param {File} file */
+  uploadMedia: async (file) => {
+    const body = new FormData()
+    body.append('file', file)
+    const res = await fetch('/api/visit-reports/upload-media', {
+      method: 'POST',
+      body,
+      credentials: 'include',
+    })
+    if (!res.ok) {
+      const text = await res.text()
+      throw new Error(text || res.statusText)
+    }
+    const data = await res.json()
+    return data.url
+  },
 }
 
 

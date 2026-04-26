@@ -1,4 +1,7 @@
 from typing import List, Optional
+
+from app.core.payment_modes import DEFAULT_VISIT_REPORT_PAYMENT_MODE, is_depot_vente
+from app.domain.expected_return_week import iso_week_and_year_after_n_weeks
 from app.models.visit_report import VisitReport
 from app.repositories.visit_report_repository import VisitReportRepository
 from app.repositories.delivery_note_repository import DeliveryNoteRepository
@@ -28,9 +31,26 @@ class VisitReportService:
     
     def create_report(self, report_data: dict) -> VisitReport:
         """Crée un nouveau rapport de visite"""
+        import copy
         import uuid
+
+        report_data = copy.deepcopy(report_data)
         report_data['id'] = str(uuid.uuid4())
-        
+
+        wk = report_data.pop('weeks_until_return', None)
+        if wk is not None and str(wk).strip() != '':
+            try:
+                y, iso_w = iso_week_and_year_after_n_weeks(int(wk))
+                report_data['expected_return_iso_year'] = y
+                report_data['expected_return_iso_week'] = iso_w
+            except (ValueError, TypeError):
+                pass
+        report_data.pop('next_visit_date', None)
+
+        for k in ("voice_note_url", "photo_note_url", "video_note_url"):
+            if report_data.get(k) == "":
+                report_data[k] = None
+
         # Convertir bottles_deposited en int si c'est une chaîne
         if 'bottles_deposited' in report_data:
             try:
@@ -44,7 +64,7 @@ class VisitReportService:
                 if pharmacy and pharmacy.payment_mode:
                     report_data['payment_mode'] = pharmacy.payment_mode
                 else:
-                    report_data['payment_mode'] = 'encaissement sous 30 jours'
+                    report_data['payment_mode'] = DEFAULT_VISIT_REPORT_PAYMENT_MODE
 
         report = VisitReport.from_dict(report_data)
         saved = self.visit_report_repo.create(report)
@@ -53,7 +73,7 @@ class VisitReportService:
         if (
             saved.has_deposit
             and saved.bottles_deposited > 0
-            and saved.payment_mode == "dépôt-vente"
+            and is_depot_vente(saved.payment_mode)
         ):
             self._create_delivery_note(saved)
 
@@ -75,7 +95,7 @@ class VisitReportService:
             'commercial_id': report.commercial_id,
             'delivery_date': report.visit_date,
             'bottles_count': report.bottles_deposited,
-            'is_deposit_sale': report.payment_mode == 'dépôt-vente',
+            'is_deposit_sale': is_depot_vente(report.payment_mode),
             'status': 'pending',
             'email_sent': False,
         }
@@ -84,10 +104,27 @@ class VisitReportService:
     
     def update_report(self, report_id: str, report_data: dict) -> Optional[VisitReport]:
         """Met à jour un rapport"""
+        import copy
+
         existing = self.visit_report_repo.find_by_id(report_id)
         if not existing:
             return None
-        
+
+        report_data = copy.deepcopy(report_data)
+        wk = report_data.pop('weeks_until_return', None)
+        if wk is not None and str(wk).strip() != '':
+            try:
+                y, iso_w = iso_week_and_year_after_n_weeks(int(wk))
+                report_data['expected_return_iso_year'] = y
+                report_data['expected_return_iso_week'] = iso_w
+            except (ValueError, TypeError):
+                pass
+        report_data.pop('next_visit_date', None)
+
+        for k in ("voice_note_url", "photo_note_url", "video_note_url"):
+            if k in report_data and report_data.get(k) == "":
+                report_data[k] = None
+
         for key, value in report_data.items():
             if hasattr(existing, key):
                 setattr(existing, key, value)

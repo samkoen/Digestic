@@ -14,6 +14,7 @@ import { authService } from '../../services/authService'
 
 function Login() {
   const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const navigate = useNavigate()
@@ -24,7 +25,7 @@ function Login() {
     setLoading(true)
 
     try {
-      const response = await authService.login(email)
+      const response = await authService.login(email, password)
       
       // Stocker les informations utilisateur dans le localStorage
       if (response.user) {
@@ -79,6 +80,17 @@ function Login() {
                 required
                 margin="normal"
                 autoFocus
+                autoComplete="username"
+              />
+              <TextField
+                fullWidth
+                label="Mot de passe"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                margin="normal"
+                autoComplete="current-password"
               />
               <Button
                 type="submit"
@@ -92,7 +104,7 @@ function Login() {
             </form>
 
             <Typography variant="body2" color="text.secondary" align="center" sx={{ mt: 2 }}>
-              Utilisez votre email pour vous connecter
+              Saisissez l’email et le mot de passe de votre compte.
             </Typography>
             <Typography variant="caption" color="text.secondary" align="center" sx={{ mt: 1, display: 'block' }}>
               Exemples: admin@digestic.fr, odelia@digestic.fr, camille@digestic.fr, aaron@digestic.fr

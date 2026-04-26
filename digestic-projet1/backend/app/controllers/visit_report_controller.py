@@ -1,6 +1,8 @@
+import uuid
+from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
@@ -12,6 +14,26 @@ from app.repositories.visit_repository import VisitRepository
 from app.services.visit_report_service import VisitReportService
 
 router = APIRouter()
+
+BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+VISIT_REPORT_MEDIA_DIR = BACKEND_DIR / "uploads" / "visit_reports"
+MEDIA_MAX_BYTES = 50 * 1024 * 1024
+MEDIA_ALLOWED_EXT = {
+    ".webm",
+    ".mp3",
+    ".m4a",
+    ".wav",
+    ".ogg",
+    ".opus",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".gif",
+    ".webp",
+    ".mp4",
+    ".mov",
+    ".m4v",
+}
 
 
 def get_visit_report_service(db: Session = Depends(get_db)) -> VisitReportService:
@@ -39,6 +61,25 @@ def get_visit_reports(
         return [report.to_dict() for report in reports]
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@router.post("/upload-media")
+async def upload_visit_report_media(
+    file: UploadFile = File(...),
+):
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in MEDIA_ALLOWED_EXT:
+        raise HTTPException(
+            status_code=400, detail="Type de fichier non autorisé pour la pièce jointe"
+        )
+    VISIT_REPORT_MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+    name = f"{uuid.uuid4().hex}{ext}"
+    path = VISIT_REPORT_MEDIA_DIR / name
+    data = await file.read()
+    if len(data) > MEDIA_MAX_BYTES:
+        raise HTTPException(status_code=400, detail="Fichier trop volumineux (max 50 Mo)")
+    path.write_bytes(data)
+    return {"url": f"/uploads/visit_reports/{name}"}
 
 
 @router.post("/sync", status_code=200)

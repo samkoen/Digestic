@@ -46,6 +46,18 @@ class UserRepository:
         ).scalar_one_or_none()
         return mp.user_orm_to_domain(row) if row else None
 
+    def get_user_and_password_hash(
+        self, email: str
+    ) -> tuple[Optional[User], Optional[str]]:
+        """Pour l’auth : utilisateur + hash bcrypt (hors modèle domaine)."""
+        row = self._db.execute(
+            select(orm.User).where(orm.User.email == email)
+        ).scalar_one_or_none()
+        if not row:
+            return None, None
+        h = row.password_hash
+        return mp.user_orm_to_domain(row), h if h else None
+
     def find_by(self, **kwargs) -> list[User]:
         q = select(orm.User)
         for k, v in kwargs.items():

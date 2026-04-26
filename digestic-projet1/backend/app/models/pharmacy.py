@@ -10,9 +10,12 @@ class Pharmacy:
     address: str
     city: str
     postal_code: str
-    warehouse_id: str | None = None  # requis côté PostgreSQL, exposé API
+    warehouse_id: str | None = None  # dépôt (warehouses) ; requis côté PostgreSQL
+    depot_name: str | None = None  # nom du dépôt (lecture seule, jointure)
+    depot_type: str | None = None  # central | secondaire (lecture seule)
     country: str | None = None
     email: str | None = None  # email principal pharmacie (API)
+    phone: str | None = None  # téléphone établissement (DB pharmacies.phone)
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     pharmacist_name: Optional[str] = None
@@ -21,9 +24,10 @@ class Pharmacy:
     rib: Optional[str] = None  # RIB (Relevé d'Identité Bancaire)
     status: str = "actif"  # actif, desactive, standby, autre, … (Sage TYPE / règles métier)
     commercial_id: Optional[str] = None  # ID du commercial assigné
+    last_visit_at: Optional[str] = None  # dernière visite (ISO, aligné sur last_visit_at en base)
     next_visit_date: Optional[str] = None  # Date de la prochaine visite (ISO format)
     photo_url: Optional[str] = None
-    payment_mode: str = "encaissement sous 30 jours"
+    payment_mode: str = "virement 30 jours"
     created_at: str = None
     updated_at: str = None
     
@@ -42,9 +46,9 @@ class Pharmacy:
         """Crée un objet Pharmacy à partir d'un dictionnaire"""
         # Filtrer les champs valides pour éviter les erreurs
         valid_fields = {
-            'id', 'name', 'address', 'city', 'postal_code', 'warehouse_id', 'country', 'email',
+            'id', 'name', 'address', 'city', 'postal_code', 'warehouse_id', 'country', 'email', 'phone',
             'latitude', 'longitude', 'pharmacist_name', 'pharmacist_email', 'pharmacist_phone',
-            'rib', 'status', 'commercial_id', 'next_visit_date', 'photo_url', 'payment_mode',
+            'rib', 'status', 'commercial_id', 'last_visit_at', 'next_visit_date', 'photo_url', 'payment_mode',
             'created_at', 'updated_at'
         }
         filtered_data = {k: v for k, v in data.items() if k in valid_fields}

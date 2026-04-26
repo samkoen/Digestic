@@ -24,6 +24,7 @@ import ReceiptIcon from '@mui/icons-material/Receipt'
 import DescriptionIcon from '@mui/icons-material/Description'
 import PeopleIcon from '@mui/icons-material/People'
 import LocalShippingIcon from '@mui/icons-material/LocalShipping'
+import WarehouseIcon from '@mui/icons-material/Warehouse'
 import LogoutIcon from '@mui/icons-material/Logout'
 import { authService } from '../../services/authService'
 
@@ -67,6 +68,7 @@ function Layout({ children }) {
 
     if (user?.role === 'admin') {
       baseItems.push({ text: 'Bons de livraison', icon: <LocalShippingIcon />, path: '/delivery-notes' })
+      baseItems.push({ text: 'Dépôts', icon: <WarehouseIcon />, path: '/depots' })
       baseItems.push({ text: 'Commerciaux', icon: <PeopleIcon />, path: '/users' })
     }
 

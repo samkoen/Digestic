@@ -22,6 +22,7 @@ from sqlalchemy import (
     Uuid,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -54,6 +55,13 @@ class User(Base):
 
 class Warehouse(Base):
     __tablename__ = "warehouses"
+    __table_args__ = (
+        CheckConstraint(
+            "depot_type IN ('central', 'secondaire')",
+            name="ck_warehouses_depot_type",
+        ),
+        CheckConstraint("quantity >= 0", name="ck_warehouses_quantity_nonnegative"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), primary_key=True, default=_uuid
@@ -63,6 +71,10 @@ class Warehouse(Base):
     city: Mapped[str | None] = mapped_column(String(120), nullable=True)
     postal_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
     country: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    depot_type: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="secondaire"
+    )
+    quantity: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -72,6 +84,40 @@ class Warehouse(Base):
     )
 
     stocks: Mapped[list["WarehouseStock"]] = relationship(back_populates="warehouse")
+
+
+class DepotTransfer(Base):
+    """Mouvement de quantité d'un dépôt vers un autre (audit)."""
+
+    __tablename__ = "depot_transfers"
+    __table_args__ = (
+        CheckConstraint("quantity > 0", name="ck_depot_transfer_qty_positive"),
+        CheckConstraint(
+            "from_warehouse_id <> to_warehouse_id",
+            name="ck_depot_transfer_different_warehouses",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=_uuid
+    )
+    from_warehouse_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("warehouses.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    to_warehouse_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("warehouses.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+    from_warehouse: Mapped["Warehouse"] = relationship(foreign_keys=[from_warehouse_id])
+    to_warehouse: Mapped["Warehouse"] = relationship(foreign_keys=[to_warehouse_id])
+    created_by: Mapped["User | None"] = relationship(foreign_keys=[created_by_user_id])
 
 
 class Product(Base):
@@ -193,7 +239,9 @@ class Pharmacy(Base):
     )
     has_rib: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     rib: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    payment_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="virement_30")
+    payment_mode: Mapped[str] = mapped_column(
+        String(80), nullable=False, default="virement 30 jours"
+    )
     gocardless_customer_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     gocardless_mandate_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     pharmacy_status: Mapped[str] = mapped_column(
@@ -218,6 +266,26 @@ class Pharmacy(Base):
     group_links: Mapped[list["PharmacyGroupMember"]] = relationship(
         back_populates="pharmacy", cascade="all, delete-orphan"
     )
+    pharmacy_comments: Mapped[list["PharmacyComment"]] = relationship(
+        back_populates="pharmacy", cascade="all, delete-orphan"
+    )
+
+
+class PharmacyComment(Base):
+    __tablename__ = "pharmacy_comments"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=_uuid
+    )
+    pharmacy_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("pharmacies.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+
+    pharmacy: Mapped["Pharmacy"] = relationship(back_populates="pharmacy_comments")
 
 
 class PharmacyGroupMember(Base):
@@ -294,8 +362,15 @@ class VisitReport(Base):
     covering_status: Mapped[str] = mapped_column(String(32), default="unknown", nullable=False)
     covering_size_to_order: Mapped[str | None] = mapped_column(String(64), nullable=True)
     next_visit_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    expected_return_iso_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    expected_return_iso_week: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    voice_note_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    photo_note_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    video_note_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     delivery_mode: Mapped[str] = mapped_column(String(32), default="normal", nullable=False)
-    payment_mode: Mapped[str] = mapped_column(String(64), default="encaissement sous 30 jours", nullable=False)
+    payment_mode: Mapped[str] = mapped_column(
+        String(64), default="virement 30 jours", nullable=False
+    )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     synced: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -488,6 +563,46 @@ class CommercialMaterial(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     version: Mapped[str] = mapped_column(String(20), default="1.0", nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class AppTableViewSetting(Base):
+    """Colonnes visibles (ordre) pour un type de tableau, éditable par admin."""
+
+    __tablename__ = "app_table_view_settings"
+    __table_args__ = (UniqueConstraint("view_key", name="uq_app_table_view_settings_view_key"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=_uuid
+    )
+    view_key: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    visible_column_keys: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    updated_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+
+class PharmacyListSavedFilter(Base):
+    """Filtres enregistrés pour la liste pharmacies (un utilisateur = plusieurs préréglages)."""
+
+    __tablename__ = "pharmacy_list_saved_filters"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=_uuid
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

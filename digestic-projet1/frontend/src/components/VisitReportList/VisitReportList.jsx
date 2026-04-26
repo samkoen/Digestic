@@ -17,6 +17,7 @@ import {
 } from '@mui/material'
 import { format } from 'date-fns'
 import { visitReportService } from '../../services/visitReportService'
+import { getVisitNotCompletedReasonLabel } from '../../constants/visitReportForm'
 
 function VisitReportList({ open, onClose, pharmacyId, pharmacyName, onSelectReport }) {
   const [reports, setReports] = useState([])
@@ -59,12 +60,8 @@ function VisitReportList({ open, onClose, pharmacyId, pharmacyName, onSelectRepo
     if (report.visit_status === 'completed') {
       return <Chip label="Effectuée" color="success" size="small" />
     } else {
-      const reason = report.visit_not_completed_reason === 'pharmacy_closed' 
-        ? 'Pharmacie fermée' 
-        : report.visit_not_completed_reason === 'owner_absent'
-        ? 'Titulaire absent'
-        : 'Non effectuée'
-      return <Chip label={reason} color="error" size="small" />
+      const label = getVisitNotCompletedReasonLabel(report.visit_not_completed_reason)
+      return <Chip label={label !== '-' ? label : 'Non effectuée'} color="error" size="small" />
     }
   }
 
