@@ -1,23 +1,28 @@
 from typing import List, Optional
 
-from app.core.payment_modes import DEFAULT_VISIT_REPORT_PAYMENT_MODE, is_depot_vente
+from sqlalchemy.orm import Session
+
+from app.core.payment_modes import DEFAULT_VISIT_REPORT_PAYMENT_MODE
+from app.domain.billing import normalize_billing_type
 from app.domain.expected_return_week import iso_week_and_year_after_n_weeks
 from app.models.visit_report import VisitReport
 from app.repositories.visit_report_repository import VisitReportRepository
-from app.repositories.delivery_note_repository import DeliveryNoteRepository
 from app.repositories.visit_repository import VisitRepository
 from app.repositories.pharmacy_repository import PharmacyRepository
+from app.services.visit_billing_service import VisitBillingOrchestrator
 
 class VisitReportService:
     """Service pour la gestion des rapports de visite"""
     
-    def __init__(self, visit_report_repo: VisitReportRepository, 
-                 delivery_note_repo: DeliveryNoteRepository,
-                 visit_repo: VisitRepository,
-                 pharmacy_repo: PharmacyRepository,
-                 ):
+    def __init__(
+        self,
+        db: Session,
+        visit_report_repo: VisitReportRepository,
+        visit_repo: VisitRepository,
+        pharmacy_repo: PharmacyRepository,
+    ):
+        self._db = db
         self.visit_report_repo = visit_report_repo
-        self.delivery_note_repo = delivery_note_repo
         self.visit_repo = visit_repo
         self.pharmacy_repo = pharmacy_repo
     
@@ -58,6 +63,25 @@ class VisitReportService:
             except (ValueError, TypeError):
                 report_data['bottles_deposited'] = 0
 
+        if 'free_units' in report_data:
+            try:
+                report_data['free_units'] = int(report_data['free_units'])
+            except (ValueError, TypeError):
+                report_data['free_units'] = 0
+
+        if 'returns_quantity' in report_data:
+            try:
+                report_data['returns_quantity'] = int(report_data['returns_quantity'])
+            except (ValueError, TypeError):
+                report_data['returns_quantity'] = 0
+        else:
+            report_data['returns_quantity'] = 0
+
+        report_data['billing_type'] = normalize_billing_type(report_data.get('billing_type'))
+        rsrc = report_data.get('return_source_visit_report_id')
+        if rsrc is not None and str(rsrc).strip() == '':
+            report_data['return_source_visit_report_id'] = None
+
         if report_data.get('has_deposit') and report_data.get('bottles_deposited', 0) > 0:
             if not report_data.get('payment_mode'):
                 pharmacy = self.pharmacy_repo.find_by_id(report_data.get('pharmacy_id'))
@@ -69,13 +93,11 @@ class VisitReportService:
         report = VisitReport.from_dict(report_data)
         saved = self.visit_report_repo.create(report)
 
-        # Après persistance (FK `deposits.visit_report_id` vers `visit_reports`)
-        if (
-            saved.has_deposit
-            and saved.bottles_deposited > 0
-            and is_depot_vente(saved.payment_mode)
-        ):
-            self._create_delivery_note(saved)
+        needs_billing = (
+            saved.has_deposit and (saved.bottles_deposited > 0 or saved.free_units > 0)
+        ) or (getattr(saved, "returns_quantity", 0) or 0) > 0
+        if needs_billing:
+            VisitBillingOrchestrator(self._db).run_after_visit_report_persisted(saved)
 
         if saved.visit_id:
             visit = self.visit_repo.find_by_id(saved.visit_id)
@@ -84,23 +106,6 @@ class VisitReportService:
                 self.visit_repo.update(visit.id, visit)
 
         return saved
-    
-    def _create_delivery_note(self, report: VisitReport):
-        """Crée un bon de livraison à partir d'un rapport"""
-        import uuid
-        delivery_note_data = {
-            'id': str(uuid.uuid4()),
-            'visit_report_id': report.id,
-            'pharmacy_id': report.pharmacy_id,
-            'commercial_id': report.commercial_id,
-            'delivery_date': report.visit_date,
-            'bottles_count': report.bottles_deposited,
-            'is_deposit_sale': is_depot_vente(report.payment_mode),
-            'status': 'pending',
-            'email_sent': False,
-        }
-        delivery_note = self.delivery_note_repo._model_from_dict(delivery_note_data)
-        self.delivery_note_repo.create(delivery_note)
     
     def update_report(self, report_id: str, report_data: dict) -> Optional[VisitReport]:
         """Met à jour un rapport"""

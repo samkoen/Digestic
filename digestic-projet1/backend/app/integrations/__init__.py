@@ -1,0 +1,1 @@
+"""Adaptateurs externes (facturation, etc.)."""

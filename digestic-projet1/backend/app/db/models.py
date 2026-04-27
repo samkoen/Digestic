@@ -127,12 +127,16 @@ class Product(Base):
         Uuid(as_uuid=True), primary_key=True, default=_uuid
     )
     code: Mapped[str | None] = mapped_column(String(100), unique=True, index=True, nullable=True)
+    ean: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     wholesale_unit_price: Mapped[float] = mapped_column(Numeric(12, 4), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), default="EUR", nullable=False)
     vat_rate: Mapped[float] = mapped_column(Numeric(5, 2), nullable=False)
     units_per_carton: Mapped[int] = mapped_column(Integer, nullable=False)
+    is_default_for_billing: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -373,11 +377,28 @@ class VisitReport(Base):
     )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     synced: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    billing_type: Mapped[str] = mapped_column(
+        String(32), default="immediate", nullable=False
+    )
+    returns_quantity: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    return_source_visit_report_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("visit_reports.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "billing_type IN ('immediate', 'monthly_recap')",
+            name="ck_visit_reports_billing_type",
+        ),
     )
 
     visit: Mapped["Visit | None"] = relationship(back_populates="visit_reports")
@@ -413,6 +434,7 @@ class Deposit(Base):
     validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Total bouteilles (flux legacy aligné sur l'ancien modèle delivery_note) ; complété par deposit_lines
     bottles_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    free_units_quantity: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -509,13 +531,27 @@ class Invoice(Base):
     pharmacy_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("pharmacies.id", ondelete="RESTRICT"), nullable=False, index=True
     )
+    deposit_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("deposits.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    visit_report_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("visit_reports.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     invoice_number: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
     amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
     issue_date: Mapped[date] = mapped_column(Date, nullable=False)
     due_date: Mapped[date] = mapped_column(Date, nullable=False)
+    sale_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    invoice_billing_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    amount_ht: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    amount_vat: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    amount_ttc: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False)
     payment_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     reference_external: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    external_provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    external_invoice_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    mock_provider_payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     days_overdue: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -545,9 +581,125 @@ class InvoiceLine(Base):
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     unit_price: Mapped[float] = mapped_column(Numeric(12, 4), nullable=False)
     vat_rate: Mapped[float] = mapped_column(Numeric(5, 2), nullable=False)
+    is_free_unit: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    discount_percent: Mapped[float] = mapped_column(Numeric(5, 2), default=0, nullable=False)
+    line_total_ht: Mapped[float | None] = mapped_column(Numeric(12, 4), nullable=True)
+    reference_unit_price_ht: Mapped[float | None] = mapped_column(Numeric(12, 4), nullable=True)
 
     invoice: Mapped["Invoice"] = relationship(back_populates="lines")
     product: Mapped["Product"] = relationship()
+
+
+class BillingRecapSlice(Base):
+    """Morceau de facturation pour facture récapitulative de fin de mois (hors facture finale)."""
+
+    __tablename__ = "billing_recap_slices"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=_uuid
+    )
+    visit_report_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("visit_reports.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    pharmacy_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("pharmacies.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    deposit_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("deposits.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    year_month: Mapped[str] = mapped_column(String(7), nullable=False, index=True)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class CreditNote(Base):
+    __tablename__ = "credit_notes"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=_uuid
+    )
+    pharmacy_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("pharmacies.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    source_invoice_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("invoices.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    credit_note_number: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    issue_date: Mapped[date] = mapped_column(Date, nullable=False)
+    amount_ttc: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    amount_ht: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    amount_vat: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="issued", nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    external_provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    external_credit_note_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    mock_provider_payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    lines: Mapped[list["CreditNoteLine"]] = relationship(
+        back_populates="credit_note", cascade="all, delete-orphan"
+    )
+
+
+class CreditNoteLine(Base):
+    __tablename__ = "credit_note_lines"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=_uuid
+    )
+    credit_note_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("credit_notes.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    product_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("products.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    unit_price: Mapped[float] = mapped_column(Numeric(12, 4), nullable=False)
+    vat_rate: Mapped[float] = mapped_column(Numeric(5, 2), nullable=False)
+    is_free_unit: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    credit_note: Mapped["CreditNote"] = relationship(back_populates="lines")
+    product: Mapped["Product"] = relationship()
+
+
+class Payment(Base):
+    __tablename__ = "payments"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=_uuid
+    )
+    pharmacy_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("pharmacies.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    payment_date: Mapped[date] = mapped_column(Date, nullable=False)
+    payment_mode: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    reference: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class InvoicePaymentAllocation(Base):
+    __tablename__ = "invoice_payment_allocations"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=_uuid
+    )
+    payment_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("payments.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    invoice_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("invoices.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
 
 
 class CommercialMaterial(Base):
@@ -590,10 +742,10 @@ class AppTableViewSetting(Base):
     )
 
 
-class PharmacyListSavedFilter(Base):
-    """Filtres enregistrés pour la liste pharmacies (un utilisateur = plusieurs préréglages)."""
+class SavedListFilter(Base):
+    """Préréglages de filtres liste (pharmacies, factures, …) par utilisateur."""
 
-    __tablename__ = "pharmacy_list_saved_filters"
+    __tablename__ = "saved_list_filters"
 
     id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), primary_key=True, default=_uuid
@@ -601,6 +753,7 @@ class PharmacyListSavedFilter(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
+    view_key: Mapped[str] = mapped_column(String(32), nullable=False)
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -609,3 +762,5 @@ class PharmacyListSavedFilter(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+

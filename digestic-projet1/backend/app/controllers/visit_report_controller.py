@@ -7,7 +7,6 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.dependencies import get_db
-from app.repositories.delivery_note_repository import DeliveryNoteRepository
 from app.repositories.pharmacy_repository import PharmacyRepository
 from app.repositories.visit_report_repository import VisitReportRepository
 from app.repositories.visit_repository import VisitRepository
@@ -38,8 +37,8 @@ MEDIA_ALLOWED_EXT = {
 
 def get_visit_report_service(db: Session = Depends(get_db)) -> VisitReportService:
     return VisitReportService(
+        db,
         VisitReportRepository(db),
-        DeliveryNoteRepository(db),
         VisitRepository(db),
         PharmacyRepository(db),
     )

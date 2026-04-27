@@ -10,6 +10,7 @@ from app.models.commercial_material import CommercialMaterial
 from app.models.delivery_note import DeliveryNote
 from app.models.invoice import Invoice
 from app.models.pharmacy import Pharmacy
+from app.models.product import Product
 from app.models.user import User
 from app.models.visit import Visit
 from app.models.visit_report import VisitReport
@@ -58,6 +59,24 @@ def user_orm_to_domain(row: orm.User) -> User:
         last_name=row.last_name,
         role=row.role,
         phone=row.phone,
+        is_active=row.is_active,
+        created_at=parse_datetime_iso(row.created_at) if row.created_at else None,
+        updated_at=parse_datetime_iso(row.updated_at) if row.updated_at else None,
+    )
+
+
+def product_orm_to_domain(row: orm.Product) -> Product:
+    return Product(
+        id=str(row.id),
+        code=row.code,
+        ean=getattr(row, "ean", None),
+        name=row.name,
+        description=row.description,
+        wholesale_unit_price=float(row.wholesale_unit_price),
+        currency=row.currency or "EUR",
+        vat_rate=float(row.vat_rate),
+        units_per_carton=int(row.units_per_carton),
+        is_default_for_billing=bool(getattr(row, "is_default_for_billing", False)),
         is_active=row.is_active,
         created_at=parse_datetime_iso(row.created_at) if row.created_at else None,
         updated_at=parse_datetime_iso(row.updated_at) if row.updated_at else None,
@@ -140,6 +159,13 @@ def report_orm_to_domain(r: orm.VisitReport) -> VisitReport:
         payment_mode=_payment_to_api(r.payment_mode),
         notes=r.notes,
         synced=r.synced,
+        billing_type=getattr(r, "billing_type", None) or "immediate",
+        returns_quantity=int(getattr(r, "returns_quantity", 0) or 0),
+        return_source_visit_report_id=(
+            str(r.return_source_visit_report_id)
+            if getattr(r, "return_source_visit_report_id", None)
+            else None
+        ),
         created_at=parse_datetime_iso(r.created_at) if r.created_at else None,
         updated_at=parse_datetime_iso(r.updated_at) if r.updated_at else None,
     )
@@ -155,6 +181,7 @@ def deposit_orm_to_note(d: orm.Deposit) -> DeliveryNote:
         commercial_id=str(d.commercial_id),
         delivery_date=d.delivery_date.isoformat() if d.delivery_date else "",
         bottles_count=d.bottles_count,
+        free_units_quantity=int(getattr(d, "free_units_quantity", 0) or 0),
         is_deposit_sale=d.is_deposit_sale,
         status=d.status,
         sage_reference=d.reference_external,
@@ -167,6 +194,8 @@ def deposit_orm_to_note(d: orm.Deposit) -> DeliveryNote:
 
 def invoice_orm_to_domain(inv: orm.Invoice) -> Invoice:
     pd: str | None = inv.payment_date.isoformat() if inv.payment_date else None
+    sd: str | None = inv.sale_date.isoformat() if getattr(inv, "sale_date", None) else None
+    mock_payload = getattr(inv, "mock_provider_payload", None)
     return Invoice(
         id=str(inv.id),
         pharmacy_id=str(inv.pharmacy_id),
@@ -177,6 +206,16 @@ def invoice_orm_to_domain(inv: orm.Invoice) -> Invoice:
         status=inv.status,
         payment_date=pd,
         sage_reference=inv.reference_external,
+        deposit_id=str(inv.deposit_id) if getattr(inv, "deposit_id", None) else None,
+        visit_report_id=str(inv.visit_report_id) if getattr(inv, "visit_report_id", None) else None,
+        sale_date=sd,
+        billing_type=getattr(inv, "invoice_billing_type", None),
+        amount_ht=float(inv.amount_ht) if getattr(inv, "amount_ht", None) is not None else None,
+        amount_vat=float(inv.amount_vat) if getattr(inv, "amount_vat", None) is not None else None,
+        amount_ttc=float(inv.amount_ttc) if getattr(inv, "amount_ttc", None) is not None else None,
+        external_provider=getattr(inv, "external_provider", None),
+        external_invoice_id=getattr(inv, "external_invoice_id", None),
+        mock_provider_payload=dict(mock_payload) if mock_payload else None,
         days_overdue=inv.days_overdue,
         created_at=parse_datetime_iso(inv.created_at) if inv.created_at else None,
         updated_at=parse_datetime_iso(inv.updated_at) if inv.updated_at else None,

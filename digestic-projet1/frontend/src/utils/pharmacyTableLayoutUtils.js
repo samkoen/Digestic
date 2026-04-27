@@ -99,17 +99,19 @@ function hamiltonToInt(exact, target) {
  * @param {number} containerW
  * @param {Record<string, number>} minPx
  * @param {string[]} resizableOrder
+ * @param {number} [tableActionsWidthPx=PHARM_TABLE_ACTIONS_PX] - colonne d’actions (ou PDF) à l’extérieur des largeurs resizables
  */
-export function computeResizablePixelWidths(frac, containerW, minPx, resizableOrder) {
+export function computeResizablePixelWidths(frac, containerW, minPx, resizableOrder, tableActionsWidthPx = PHARM_TABLE_ACTIONS_PX) {
   const ro = resizableOrder || []
   const W = Math.max(200, containerW)
-  const avail = W - PHARM_TABLE_ACTIONS_PX
+  const A = tableActionsWidthPx
+  const avail = W - A
   if (avail < 4 || ro.length === 0) {
     const colWidths = Object.fromEntries(ro.map((k) => [k, minPx[k] ?? 64]))
-    const tableMinWidth = ro.reduce((a, k) => a + (minPx[k] ?? 64), 0) + PHARM_TABLE_ACTIONS_PX
+    const tableMinWidth = ro.reduce((a, k) => a + (minPx[k] ?? 64), 0) + A
     return {
       colWidths,
-      actions: PHARM_TABLE_ACTIONS_PX,
+      actions: A,
       tableMinWidth,
       overflow: true,
     }
@@ -123,10 +125,10 @@ export function computeResizablePixelWidths(frac, containerW, minPx, resizableOr
 
   if (S > avail + 0.5) {
     const rounded = withMin.map((x) => Math.round(x))
-    const tsum = rounded.reduce((a, b) => a + b, 0) + PHARM_TABLE_ACTIONS_PX
+    const tsum = rounded.reduce((a, b) => a + b, 0) + A
     return {
       colWidths: Object.fromEntries(ro.map((k, i) => [k, rounded[i]])),
-      actions: PHARM_TABLE_ACTIONS_PX,
+      actions: A,
       tableMinWidth: tsum,
       overflow: true,
     }
@@ -137,7 +139,7 @@ export function computeResizablePixelWidths(frac, containerW, minPx, resizableOr
   const intParts = hamiltonToInt(spread, avail)
   return {
     colWidths: Object.fromEntries(ro.map((k, i) => [k, intParts[i]])),
-    actions: PHARM_TABLE_ACTIONS_PX,
+    actions: A,
     tableMinWidth: W,
     overflow: false,
   }

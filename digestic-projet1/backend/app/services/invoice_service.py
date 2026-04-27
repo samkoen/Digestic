@@ -1,7 +1,10 @@
-from typing import List, Optional
+from typing import Any, List, Optional
+
 from datetime import datetime, timedelta
+
 from app.models.invoice import Invoice
 from app.repositories.invoice_repository import InvoiceRepository
+
 
 class InvoiceService:
     """Service pour la gestion des factures"""
@@ -79,4 +82,53 @@ class InvoiceService:
         """Récupère les factures d'une pharmacie"""
         return self.repository.find_by_pharmacy(pharmacy_id)
 
+    def list_invoices_paginated(
+        self,
+        *,
+        page: int = 1,
+        page_size: int = 20,
+        sort: str = "issueDate",
+        order: str = "asc",
+        status: str | None = None,
+        invoice_number: str | None = None,
+        pharmacy_id: str | None = None,
+        pharmacy_name: str | None = None,
+        overdue_only: bool = False,
+        overdue_min_days: int = 0,
+    ) -> Any:
+        """Liste paginée avec tri et filtres (jointure pharmacie pour le nom)."""
+        return self.repository.search_paginated(
+            page=page,
+            page_size=page_size,
+            sort=sort,
+            order=order,
+            status=status,
+            invoice_number=invoice_number,
+            pharmacy_id=pharmacy_id,
+            pharmacy_name=pharmacy_name,
+            overdue_only=overdue_only,
+            overdue_min_days=overdue_min_days,
+        )
 
+    def fetch_vosfactures_pdf(self, invoice_id: str) -> tuple[bytes, str] | None:
+        """Télécharge le PDF depuis VosFactures si facture émise via l’API réelle."""
+        from app.integrations.vosfactures.config import vosfactures_is_configured
+        from app.integrations.vosfactures.http_client import VosFacturesApiClient
+
+        inv = self.repository.find_by_id(invoice_id)
+        if not inv:
+            return None
+        if inv.external_provider != "vosfactures":
+            return None
+        if not inv.external_invoice_id:
+            return None
+        if not vosfactures_is_configured():
+            return None
+        client = VosFacturesApiClient()
+        pdf = client.fetch_invoice_pdf(inv.external_invoice_id)
+        base = (inv.invoice_number or inv.id).strip()
+        safe = "".join(c if c.isalnum() or c in " ._-" else "_" for c in base)[:120]
+        filename = f"{safe or 'facture'}.pdf"
+        if not filename.lower().endswith(".pdf"):
+            filename = f"{filename}.pdf"
+        return pdf, filename

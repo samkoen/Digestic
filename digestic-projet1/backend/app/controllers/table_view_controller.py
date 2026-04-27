@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.session_roles import require_admin_user_id, require_user_id
 from app.dependencies import get_db
-from app.services import pharmacy_saved_filter_service, table_view_service
+from app.services import saved_list_filter_service, table_view_service
 
 router = APIRouter()
 
@@ -46,49 +46,49 @@ def put_pharmacy_table_view(
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-@router.get("/pharmacies/saved-filters")
-def list_pharmacy_saved_filters(
-    request: Request,
-    db: Session = Depends(get_db),
-) -> Any:
+@router.get("/invoices")
+def get_invoices_table_view(db: Session = Depends(get_db)) -> Any:
     try:
-        uid = require_user_id(request)
-    except HTTPException as e:
-        return JSONResponse(
-            {"error": str(e.detail)}, status_code=int(e.status_code)
-        )
-    try:
-        return pharmacy_saved_filter_service.list_for_user(db, uid)
+        return table_view_service.get_invoices_table_view(db)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-@router.post("/pharmacies/saved-filters")
-def create_pharmacy_saved_filter(
+@router.put("/invoices")
+def put_invoices_table_view(
     request: Request,
     body: dict[str, Any] | None = Body(default=None),
     db: Session = Depends(get_db),
 ) -> Any:
+    if not body or not isinstance(body.get("visibleColumnKeys"), list):
+        return JSONResponse(
+            {"error": "visibleColumnKeys (liste) requis"},
+            status_code=400,
+        )
     try:
-        uid = require_user_id(request)
+        admin_id = require_admin_user_id(request)
     except HTTPException as e:
         return JSONResponse(
             {"error": str(e.detail)}, status_code=int(e.status_code)
         )
     try:
-        return pharmacy_saved_filter_service.create(db, uid, body)
+        return table_view_service.set_invoices_table_view(
+            db, body["visibleColumnKeys"], admin_id
+        )
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-@router.delete("/pharmacies/saved-filters/{filter_id}")
-def delete_pharmacy_saved_filter(
+@router.get("/{view_key}/saved-filters")
+def list_saved_filters(
     request: Request,
-    filter_id: str,
+    view_key: str,
     db: Session = Depends(get_db),
 ) -> Any:
+    if view_key not in saved_list_filter_service.ALLOWED_VIEWS:
+        return JSONResponse({"error": "Vue inconnue"}, status_code=404)
     try:
         uid = require_user_id(request)
     except HTTPException as e:
@@ -96,7 +96,51 @@ def delete_pharmacy_saved_filter(
             {"error": str(e.detail)}, status_code=int(e.status_code)
         )
     try:
-        ok = pharmacy_saved_filter_service.delete_for_user(db, uid, filter_id)
+        return saved_list_filter_service.list_for_user(db, uid, view_key)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@router.post("/{view_key}/saved-filters")
+def create_saved_filter(
+    request: Request,
+    view_key: str,
+    body: dict[str, Any] | None = Body(default=None),
+    db: Session = Depends(get_db),
+) -> Any:
+    if view_key not in saved_list_filter_service.ALLOWED_VIEWS:
+        return JSONResponse({"error": "Vue inconnue"}, status_code=404)
+    try:
+        uid = require_user_id(request)
+    except HTTPException as e:
+        return JSONResponse(
+            {"error": str(e.detail)}, status_code=int(e.status_code)
+        )
+    try:
+        return saved_list_filter_service.create(db, uid, view_key, body)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@router.delete("/{view_key}/saved-filters/{filter_id}")
+def delete_saved_filter(
+    request: Request,
+    view_key: str,
+    filter_id: str,
+    db: Session = Depends(get_db),
+) -> Any:
+    if view_key not in saved_list_filter_service.ALLOWED_VIEWS:
+        return JSONResponse({"error": "Vue inconnue"}, status_code=404)
+    try:
+        uid = require_user_id(request)
+    except HTTPException as e:
+        return JSONResponse(
+            {"error": str(e.detail)}, status_code=int(e.status_code)
+        )
+    try:
+        ok = saved_list_filter_service.delete_for_user(db, uid, view_key, filter_id)
         if not ok:
             return JSONResponse({"error": "Filtre non trouvé"}, status_code=404)
         return {"ok": True}

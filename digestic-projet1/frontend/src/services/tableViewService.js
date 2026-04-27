@@ -1,20 +1,44 @@
 import api from './api'
 
 /**
+ * @param {string} viewKey - ex. 'pharmacies' | 'invoices'
+ * @returns {{ fetch: () => Promise, save: (visibleColumnKeys: string[]) => Promise }}
+ */
+export function createTableViewClient(viewKey) {
+  const base = `/table-views/${viewKey}`
+  return {
+    async fetch() {
+      const { data } = await api.get(base)
+      return data
+    },
+    async save(visibleColumnKeys) {
+      const { data } = await api.put(base, { visibleColumnKeys })
+      return data
+    },
+  }
+}
+
+const _pharmacy = createTableViewClient('pharmacies')
+const _invoice = createTableViewClient('invoices')
+
+/**
  * @returns {Promise<{ viewKey: string, definition: Array, visibleColumnKeys: string[] }>}
  */
 export async function fetchPharmacyTableView() {
-  const { data } = await api.get('/table-views/pharmacies')
-  return data
+  return _pharmacy.fetch()
 }
 
 /**
  * @param {string[]} visibleColumnKeys
- * @returns {Promise<{ viewKey: string, visibleColumnKeys: string[] }>}
  */
 export async function savePharmacyTableView(visibleColumnKeys) {
-  const { data } = await api.put('/table-views/pharmacies', {
-    visibleColumnKeys,
-  })
-  return data
+  return _pharmacy.save(visibleColumnKeys)
+}
+
+export async function fetchInvoiceTableView() {
+  return _invoice.fetch()
+}
+
+export async function saveInvoiceTableView(visibleColumnKeys) {
+  return _invoice.save(visibleColumnKeys)
 }

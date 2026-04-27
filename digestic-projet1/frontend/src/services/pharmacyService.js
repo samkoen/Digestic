@@ -1,4 +1,5 @@
 import api from './api'
+import { buildSearchParamsForPagedList } from '../utils/httpQueryParams'
 
 const DEFAULT_LIST_PARAMS = { sort: 'name', order: 'asc' }
 
@@ -6,19 +7,6 @@ const DEFAULT_LIST_PARAMS = { sort: 'name', order: 'asc' }
  * @param {Record<string, unknown>} params — page, page_size, sort, order, filtres (name, address, …)
  * @returns {Promise<{ items: any[], total: number, page: number, page_size: number }>}
  */
-function appendRepeatedQuery(sp, key, val) {
-  if (Array.isArray(val)) {
-    for (const p of val) {
-      const t = String(p).trim()
-      if (t) {
-        sp.append(key, t)
-      }
-    }
-  } else if (val !== undefined && val !== null && String(val).trim() !== '') {
-    sp.append(key, String(val).trim())
-  }
-}
-
 export const fetchPharmacyDistinctCities = async () => {
   const { data } = await api.get('/pharmacies/distinct-cities')
   return Array.isArray(data) ? data : []
@@ -26,26 +14,16 @@ export const fetchPharmacyDistinctCities = async () => {
 
 export const fetchPharmaciesPage = async (params = {}) => {
   const merged = { ...DEFAULT_LIST_PARAMS, ...params }
-  const {
-    postal_code: postalCodeParam,
-    commercial_id: commercialIdParam,
-    payment_mode: paymentModeParam,
-    city: cityParam,
-    warehouse_id: warehouseIdParam,
-    ...rest
-  } = merged
-  const sp = new URLSearchParams()
-  for (const [k, v] of Object.entries(rest)) {
-    if (v === undefined || v === null || v === '') {
-      continue
-    }
-    sp.append(k, String(v))
-  }
-  appendRepeatedQuery(sp, 'postal_code', postalCodeParam)
-  appendRepeatedQuery(sp, 'commercial_id', commercialIdParam)
-  appendRepeatedQuery(sp, 'payment_mode', paymentModeParam)
-  appendRepeatedQuery(sp, 'city', cityParam)
-  appendRepeatedQuery(sp, 'warehouse_id', warehouseIdParam)
+  const sp = buildSearchParamsForPagedList({
+    merged,
+    repeatedParamKeys: [
+      'postal_code',
+      'commercial_id',
+      'payment_mode',
+      'city',
+      'warehouse_id',
+    ],
+  })
   const response = await api.get('/pharmacies', { params: sp })
   return response.data
 }

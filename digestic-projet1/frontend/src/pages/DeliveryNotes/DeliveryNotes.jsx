@@ -25,7 +25,24 @@ import { format } from 'date-fns'
 import { deliveryNoteService } from '../../services/deliveryNoteService'
 import { pharmacyService } from '../../services/pharmacyService'
 import { userService } from '../../services/userService'
+import { productService } from '../../services/productService'
 import CloseIcon from '@mui/icons-material/Close'
+
+/** Aligné sur `delivery_note_service.issue_invoice_from_delivery_note` (lignes HT/TVA, arrondis). */
+function indicativeInvoiceTotals(bottles, product) {
+  const n = Math.max(0, Number(bottles) || 0)
+  if (!product || n <= 0) {
+    return { ht: 0, vat: 0, ttc: 0, vatRatePercent: 0 }
+  }
+  const unitHt = Number(product.wholesale_unit_price) || 0
+  const vatRate = Number(product.vat_rate) || 0
+  const lht = Math.round(n * unitHt * 10000) / 10000
+  const lvat = Math.round(lht * (vatRate / 100) * 10000) / 10000
+  const totalHt = Math.round(lht * 100) / 100
+  const totalVat = Math.round(lvat * 100) / 100
+  const ttc = Math.round((totalHt + totalVat) * 100) / 100
+  return { ht: totalHt, vat: totalVat, ttc, vatRatePercent: vatRate }
+}
 
 function DeliveryNotes() {
   const [deliveryNotes, setDeliveryNotes] = useState([])
@@ -38,12 +55,36 @@ function DeliveryNotes() {
     startDate: '',
     endDate: '',
   })
-  const [convertDialogOpen, setConvertDialogOpen] = useState(false)
-  const [convertTarget, setConvertTarget] = useState(null)
-  const [convertForm, setConvertForm] = useState({
+  const [invoiceDialogOpen, setInvoiceDialogOpen] = useState(false)
+  const [invoiceTarget, setInvoiceTarget] = useState(null)
+  const [invoiceForm, setInvoiceForm] = useState({
     bottles: 0,
-    amount: 0,
   })
+  const [billingProduct, setBillingProduct] = useState(null)
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const list = await productService.list({ active_only: true })
+        if (cancelled) return
+        const def =
+          list.find((p) => p.is_default_for_billing) || list[0] || null
+        setBillingProduct(def)
+      } catch (e) {
+        console.error('Produit facturation (montant indicatif BL):', e)
+        if (!cancelled) setBillingProduct(null)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const invoiceIndicative = useMemo(
+    () => indicativeInvoiceTotals(invoiceForm.bottles, billingProduct),
+    [invoiceForm.bottles, billingProduct],
+  )
 
   useEffect(() => {
     fetchDeliveryNotes()
@@ -172,32 +213,33 @@ function DeliveryNotes() {
     }))
   }
 
-  const openConvertDialog = (note) => {
-    setConvertTarget(note)
-    setConvertForm({
+  const openInvoiceDialog = (note) => {
+    setInvoiceTarget(note)
+    setInvoiceForm({
       bottles: note.bottles_count,
-      amount: note.bottles_count * 10,
     })
-    setConvertDialogOpen(true)
+    setInvoiceDialogOpen(true)
   }
 
-  const closeConvertDialog = () => {
-    setConvertDialogOpen(false)
-    setConvertTarget(null)
+  const closeInvoiceDialog = () => {
+    setInvoiceDialogOpen(false)
+    setInvoiceTarget(null)
   }
 
-  const handleConvertSubmit = async () => {
-    if (!convertTarget) return
+  const handleIssueInvoiceSubmit = async () => {
+    if (!invoiceTarget) return
     try {
-      await deliveryNoteService.convertToInvoice(convertTarget.id, {
-        bottles_to_invoice: convertForm.bottles,
-        amount: convertForm.amount,
+      await deliveryNoteService.issueInvoice(invoiceTarget.id, {
+        bottles_to_invoice: invoiceForm.bottles,
+        amount: invoiceIndicative.ttc,
       })
-      closeConvertDialog()
+      closeInvoiceDialog()
       fetchDeliveryNotes()
     } catch (error) {
-      console.error('Erreur lors de la conversion en facture:', error)
-      alert('Erreur lors de la conversion en facture')
+      console.error('Erreur lors de la facturation:', error)
+      const data = error.response?.data
+      const msg = [data?.error, data?.detail].filter(Boolean).join('\n') || error.message
+      alert(msg || 'Erreur lors de la facturation (émission facture)')
     }
   }
 
@@ -312,9 +354,9 @@ function DeliveryNotes() {
                       <Button
                         size="small"
                         variant="outlined"
-                        onClick={() => openConvertDialog(note)}
+                        onClick={() => openInvoiceDialog(note)}
                       >
-                        Convertir
+                        Facturer
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -324,50 +366,87 @@ function DeliveryNotes() {
           </Table>
         </TableContainer>
       )}
-      <Dialog open={convertDialogOpen} onClose={closeConvertDialog} maxWidth="xs" fullWidth>
+      <Dialog open={invoiceDialogOpen} onClose={closeInvoiceDialog} maxWidth="xs" fullWidth>
         <DialogTitle>
-          Convertir en facture
+          Émettre la facture
           <IconButton
             aria-label="fermer"
-            onClick={closeConvertDialog}
+            onClick={closeInvoiceDialog}
             sx={{ position: 'absolute', right: 8, top: 8 }}
           >
             <CloseIcon fontSize="small" />
           </IconButton>
         </DialogTitle>
         <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Création de la facture à partir de ce bon de livraison (VosFactures si configuré). Les
+            montants sont calculés côté serveur à partir du{' '}
+            <strong>produit par défaut de facturation</strong>
+            {billingProduct?.name ? (
+              <>
+                {' '}
+                (« {billingProduct.name} », {Number(billingProduct.wholesale_unit_price).toFixed(2)}{' '}
+                € HT / unité, TVA {Number(billingProduct.vat_rate).toFixed(1)} %)
+              </>
+            ) : null}
+            . Estimation ci-dessous (même logique que la facture émise).
+          </Typography>
           <TextField
             fullWidth
             label="Bouteilles à facturer"
             type="number"
-            value={convertForm.bottles}
-            inputProps={{ min: 1, max: convertTarget?.bottles_count || 0 }}
-            onChange={(e) => setConvertForm((prev) => ({
-              ...prev,
-              bottles: Math.min(Math.max(Number(e.target.value), 1), convertTarget?.bottles_count || 1),
-            }))}
+            value={invoiceForm.bottles}
+            inputProps={{ min: 1, max: invoiceTarget?.bottles_count || 0 }}
+            onChange={(e) =>
+              setInvoiceForm((prev) => ({
+                ...prev,
+                bottles: Math.min(
+                  Math.max(Number(e.target.value), 1),
+                  invoiceTarget?.bottles_count || 1,
+                ),
+              }))
+            }
             sx={{ mb: 2 }}
           />
-          <TextField
-            fullWidth
-            label="Montant (en €)"
-            type="number"
-            value={convertForm.amount}
-            inputProps={{ min: 0 }}
-            onChange={(e) => setConvertForm((prev) => ({
-              ...prev,
-              amount: Number(e.target.value),
-            }))}
-          />
+          {!billingProduct ? (
+            <Typography variant="body2" color="warning.main">
+              Aucun produit actif en base : impossible d’estimer le montant ici. La facturation
+              échouera aussi sans produit de facturation (prix / TVA).
+            </Typography>
+          ) : (
+            <Box
+              sx={{
+                p: 1.5,
+                borderRadius: 1,
+                bgcolor: 'action.hover',
+                border: 1,
+                borderColor: 'divider',
+              }}
+            >
+              <Typography variant="subtitle2" gutterBottom>
+                Montants indicatifs (ligne payante)
+              </Typography>
+              <Typography variant="body2">
+                Total HT : <strong>{invoiceIndicative.ht.toFixed(2)} €</strong>
+              </Typography>
+              <Typography variant="body2">
+                TVA ({invoiceIndicative.vatRatePercent.toFixed(1)} %) :{' '}
+                <strong>{invoiceIndicative.vat.toFixed(2)} €</strong>
+              </Typography>
+              <Typography variant="body2">
+                Total TTC : <strong>{invoiceIndicative.ttc.toFixed(2)} €</strong>
+              </Typography>
+            </Box>
+          )}
         </DialogContent>
         <DialogActions>
-          <Button onClick={closeConvertDialog}>Annuler</Button>
+          <Button onClick={closeInvoiceDialog}>Annuler</Button>
           <Button
             variant="contained"
-            onClick={handleConvertSubmit}
-            disabled={!convertForm.bottles || convertForm.bottles > (convertTarget?.bottles_count || 0)}
+            onClick={handleIssueInvoiceSubmit}
+            disabled={!invoiceForm.bottles || invoiceForm.bottles > (invoiceTarget?.bottles_count || 0)}
           >
-            Générer la facture
+            Facturer
           </Button>
         </DialogActions>
       </Dialog>

@@ -172,16 +172,33 @@ function PharmacyDetail() {
     input.click()
   }
 
+  const canCreateVisitReport = user?.role === 'commercial' || user?.role === 'admin'
+
   const handleCreateReport = async () => {
     try {
-      // Chercher une visite planifiée existante pour cette pharmacie (optionnelle)
-      const plannedVisits = visits.filter(v => v.status === 'planned')
+      const plannedVisits = visits.filter((v) => v.status === 'planned')
       const visitId = plannedVisits.length > 0 ? plannedVisits[0].id : null
+
+      let commercialId
+      if (user?.role === 'commercial') {
+        commercialId = user.id
+      } else if (user?.role === 'admin') {
+        commercialId = pharmacy?.commercial_id || plannedVisits[0]?.commercial_id || null
+      } else {
+        commercialId = user?.id
+      }
+
+      if (!commercialId) {
+        alert(
+          "Impossible de créer le rapport : attribuez un commercial à cette pharmacie dans la fiche, ou planifiez une visite avec un commercial."
+        )
+        return
+      }
 
       const { weeks_until_return, ...rest } = reportFormData
       const reportData = {
         pharmacy_id: id,
-        commercial_id: user.id,
+        commercial_id: commercialId,
         visit_date: new Date().toISOString(),
         ...rest,
       }
@@ -375,7 +392,7 @@ function PharmacyDetail() {
               </IconButton>
             </Tooltip>
           )}
-          {user?.role === 'commercial' && (
+          {canCreateVisitReport && (
           <Tooltip title="Ajouter un rapport de visite">
             <IconButton
               color="primary"
@@ -449,6 +466,23 @@ function PharmacyDetail() {
                 <strong>Factures en retard:</strong>{' '}
                 {invoices.filter((inv) => inv.status === 'overdue').length}
               </Typography>
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={<ReceiptIcon />}
+                sx={{ mt: 2 }}
+                fullWidth
+                onClick={() => {
+                  const q = new URLSearchParams()
+                  q.set('pharmacy_id', id)
+                  if (pharmacy.name) {
+                    q.set('pharmacy_name', pharmacy.name)
+                  }
+                  navigate(`/invoices?${q.toString()}`)
+                }}
+              >
+                Ouvrir le tableau des factures (cette pharmacie)
+              </Button>
             </CardContent>
           </Card>
         </Grid>

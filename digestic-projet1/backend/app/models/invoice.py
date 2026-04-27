@@ -1,5 +1,6 @@
+import dataclasses
 from dataclasses import dataclass, asdict
-from typing import Optional
+from typing import Any, Optional
 from datetime import datetime
 
 @dataclass
@@ -14,6 +15,16 @@ class Invoice:
     status: str = "pending"  # pending, paid, overdue, cancelled
     payment_date: Optional[str] = None
     sage_reference: Optional[str] = None  # Référence dans Sage (quand intégré)
+    deposit_id: Optional[str] = None
+    visit_report_id: Optional[str] = None
+    sale_date: Optional[str] = None
+    billing_type: Optional[str] = None
+    amount_ht: Optional[float] = None
+    amount_vat: Optional[float] = None
+    amount_ttc: Optional[float] = None
+    external_provider: Optional[str] = None
+    external_invoice_id: Optional[str] = None
+    mock_provider_payload: Optional[dict[str, Any]] = None
     days_overdue: int = 0
     created_at: str = None
     updated_at: str = None
@@ -31,6 +42,7 @@ class Invoice:
     @classmethod
     def from_dict(cls, data: dict):
         """Crée un objet Invoice à partir d'un dictionnaire"""
-        return cls(**data)
+        names = {f.name for f in dataclasses.fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in names})
 
 

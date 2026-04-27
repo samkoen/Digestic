@@ -1,3 +1,4 @@
+import dataclasses
 from dataclasses import dataclass, asdict
 from typing import Optional
 from datetime import datetime
@@ -11,6 +12,7 @@ class DeliveryNote:
     commercial_id: str
     delivery_date: str  # ISO format
     bottles_count: int
+    free_units_quantity: int = 0
     is_deposit_sale: bool = False
     status: str = "pending"  # pending, sent, confirmed
     sage_reference: Optional[str] = None  # Référence dans Sage (quand intégré)
@@ -32,6 +34,7 @@ class DeliveryNote:
     @classmethod
     def from_dict(cls, data: dict):
         """Crée un objet DeliveryNote à partir d'un dictionnaire"""
-        return cls(**data)
+        names = {f.name for f in dataclasses.fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in names})
 
 

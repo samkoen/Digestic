@@ -16,6 +16,9 @@ class VisitReport:
     has_deposit: bool = False
     bottles_deposited: int = 0
     free_units: int = 0  # Nombre d'unités gratuites (UG)
+    billing_type: str = "immediate"  # immediate | monthly_recap
+    returns_quantity: int = 0  # Retour physique (visite / dépôt antérieur)
+    return_source_visit_report_id: Optional[str] = None
     stock_status: str = "unknown"  # good, low, out_of_stock, unknown
     display_stand_status: str = "unknown"  # in_place, not_in_place, unknown
     covering_status: str = "unknown"  # in_place, to_order, unknown

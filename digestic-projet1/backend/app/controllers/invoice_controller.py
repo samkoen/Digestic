@@ -1,10 +1,11 @@
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy.orm import Session
 
 from app.dependencies import get_db
+from app.pagination import MAX_PAGE_SIZE
 from app.repositories.invoice_repository import InvoiceRepository
 from app.repositories.pharmacy_repository import PharmacyRepository
 from app.services.email_service import EmailService
@@ -19,12 +20,43 @@ def get_invoice_service(db: Session = Depends(get_db)) -> InvoiceService:
 
 @router.get("")
 def get_invoices(
+    page: int | None = Query(None, ge=1, description="Si présent, réponse paginée { items, total, … }"),
+    page_size: int = Query(20, ge=1, le=MAX_PAGE_SIZE),
+    sort: str = Query("issueDate"),
+    order: str = Query("asc"),
+    status: str | None = None,
+    invoice_number: str | None = Query(None),
+    pharmacy_name: str | None = Query(None),
     pharmacy_id: str | None = None,
+    overdue_only: bool = Query(False),
+    overdue_min_days: int = Query(0, ge=0, le=3650),
     overdue: bool = False,
     days: int = Query(default=30, ge=1),
     service: InvoiceService = Depends(get_invoice_service),
 ):
     try:
+        if page is not None:
+            pr = service.list_invoices_paginated(
+                page=page,
+                page_size=page_size,
+                sort=sort,
+                order=order,
+                status=status,
+                invoice_number=invoice_number,
+                pharmacy_id=pharmacy_id,
+                pharmacy_name=pharmacy_name,
+                overdue_only=overdue_only,
+                overdue_min_days=overdue_min_days,
+            )
+            return {
+                "items": [
+                    {**inv.to_dict(), "pharmacy_name": pname or ""}
+                    for inv, pname in pr.items
+                ],
+                "total": pr.total,
+                "page": pr.page,
+                "page_size": pr.page_size,
+            }
         if overdue:
             invoices = service.get_overdue_invoices(days)
         elif pharmacy_id:
@@ -34,6 +66,36 @@ def get_invoices(
         return [invoice.to_dict() for invoice in invoices]
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@router.get("/{invoice_id}/pdf")
+def download_invoice_pdf(
+    invoice_id: str,
+    service: InvoiceService = Depends(get_invoice_service),
+):
+    """Télécharge le PDF depuis VosFactures (jeton API côté serveur uniquement)."""
+    try:
+        result = service.fetch_vosfactures_pdf(invoice_id)
+        if result is None:
+            return JSONResponse(
+                {
+                    "error": (
+                        "PDF VosFactures indisponible (facture mock, autre fournisseur, "
+                        "identifiant externe manquant ou VosFactures non configuré)."
+                    )
+                },
+                status_code=404,
+            )
+        data, filename = result
+        return Response(
+            content=data,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+            },
+        )
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
 
 
 @router.get("/{invoice_id}")

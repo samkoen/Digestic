@@ -73,6 +73,13 @@ class VisitReportRepository:
             payment_mode=mp.normalize_payment_mode_to_db(model.payment_mode),
             notes=model.notes,
             synced=model.synced,
+            billing_type=model.billing_type or "immediate",
+            returns_quantity=int(getattr(model, "returns_quantity", 0) or 0),
+            return_source_visit_report_id=(
+                mp.parse_uuid(model.return_source_visit_report_id)
+                if getattr(model, "return_source_visit_report_id", None)
+                else None
+            ),
         )
         self._db.add(row)
         self._db.flush()
@@ -112,6 +119,16 @@ class VisitReportRepository:
         row.payment_mode = mp.normalize_payment_mode_to_db(model.payment_mode)
         row.notes = model.notes
         row.synced = model.synced
+        if hasattr(model, "billing_type"):
+            row.billing_type = model.billing_type or "immediate"
+        if hasattr(model, "returns_quantity"):
+            row.returns_quantity = int(model.returns_quantity or 0)
+        if hasattr(model, "return_source_visit_report_id"):
+            row.return_source_visit_report_id = (
+                mp.parse_uuid(model.return_source_visit_report_id)
+                if model.return_source_visit_report_id
+                else None
+            )
         self._db.flush()
         return mp.report_orm_to_domain(row)
 

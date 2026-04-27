@@ -13,6 +13,7 @@ import CommercialMaterials from './pages/CommercialMaterials/CommercialMaterials
 import Users from './pages/Users/Users'
 import DeliveryNotes from './pages/DeliveryNotes/DeliveryNotes'
 import Depots from './pages/Depots/Depots'
+import Products from './pages/Products/Products'
 import { authService } from './services/authService'
 
 function PrivateRoute({ children, adminOnly = false }) {
@@ -81,6 +82,14 @@ function App() {
                   element={
                     <PrivateRoute adminOnly>
                       <Depots />
+                    </PrivateRoute>
+                  }
+                />
+                <Route
+                  path="/products"
+                  element={
+                    <PrivateRoute adminOnly>
+                      <Products />
                     </PrivateRoute>
                   }
                 />

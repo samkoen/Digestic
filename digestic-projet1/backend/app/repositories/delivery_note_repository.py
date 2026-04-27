@@ -82,6 +82,7 @@ class DeliveryNoteRepository:
             email_sent=model.email_sent,
             email_sent_at=email_at,
             bottles_count=int(model.bottles_count or 0),
+            free_units_quantity=int(getattr(model, "free_units_quantity", 0) or 0),
         )
         self._db.add(row)
         self._db.flush()
@@ -105,6 +106,7 @@ class DeliveryNoteRepository:
         row.reference_external = model.sage_reference
         row.email_sent = model.email_sent
         row.bottles_count = int(model.bottles_count or 0)
+        row.free_units_quantity = int(getattr(model, "free_units_quantity", 0) or 0)
         if model.email_sent_at:
             try:
                 row.email_sent_at = datetime.fromisoformat(
