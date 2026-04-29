@@ -128,8 +128,10 @@ class VosFacturesApiClient:
         lines: list[dict[str, Any]],
         totals: dict[str, float],
         billing_type: str,
-        deposit_reference: str | None,
+        internal_deposit_id: str | None,
+        invoice_public_reference: str | None = None,
         currency: str = "EUR",
+        digestic_bl_number: str | None = None,
     ) -> VosFacturesInvoiceResult:
         positions = self._build_positions(lines)
         if not positions:
@@ -157,11 +159,15 @@ class VosFacturesApiClient:
         if vosfactures_test_documents():
             inv["test"] = True
 
-        if deposit_reference:
-            inv["description"] = (
-                (inv.get("description") or "").strip()
-                + f"\nRéf. dépôt Digestic : {deposit_reference}"
-            ).strip()
+        desc_lines: list[str] = []
+        bln = (digestic_bl_number or "").strip()
+        if bln:
+            desc_lines.append(f"N° bon de livraison : {bln}")
+        ref = (invoice_public_reference or "").strip()
+        if ref:
+            desc_lines.append(f"Réf. Sage / externe : {ref}")
+        if desc_lines:
+            inv["description"] = "\n".join(desc_lines)
 
         body = {"api_token": self._token, "invoice": inv}
 
@@ -182,7 +188,9 @@ class VosFacturesApiClient:
                 "billing_type": billing_type,
                 "totals": totals,
                 "lines": lines,
-                "deposit_reference": deposit_reference,
+                "internal_deposit_id": internal_deposit_id,
+                "invoice_public_reference": ref or None,
+                "digestic_bl_number": bln or None,
             },
         }
 

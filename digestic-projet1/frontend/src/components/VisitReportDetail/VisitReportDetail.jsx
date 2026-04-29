@@ -27,6 +27,7 @@ import {
   WEEKS_UNTIL_RETURN_OPTIONS,
   formatExpectedReturnIso,
   getVisitNotCompletedReasonLabel,
+  validateVisitNotCompletedReason,
 } from '../../constants/visitReportForm'
 
 function VisitReportDetail({ open, onClose, report, onUpdate }) {
@@ -159,6 +160,14 @@ function VisitReportDetail({ open, onClose, report, onUpdate }) {
   }
 
   const handleSave = async () => {
+    const reasonErr = validateVisitNotCompletedReason(
+      formData.visit_status,
+      formData.visit_not_completed_reason
+    )
+    if (reasonErr) {
+      alert(reasonErr)
+      return
+    }
     try {
       setLoading(true)
       const { weeks_until_return, next_visit_date: _nvd, ...rest } = formData
@@ -324,6 +333,7 @@ function VisitReportDetail({ open, onClose, report, onUpdate }) {
                     {isEditing ? (
                       <TextField
                         fullWidth
+                        required
                         select
                         label="Raison"
                         name="visit_not_completed_reason"
@@ -331,7 +341,11 @@ function VisitReportDetail({ open, onClose, report, onUpdate }) {
                         onChange={handleChange}
                         sx={{ mt: 0.5 }}
                         InputLabelProps={{ shrink: true }}
+                        SelectProps={{ displayEmpty: true }}
                       >
+                        <MenuItem value="">
+                          <em>Choisir une raison</em>
+                        </MenuItem>
                         <MenuItem value="pharmacy_closed">Pharmacie fermée</MenuItem>
                         <MenuItem value="owner_absent">Titulaire absent</MenuItem>
                         <MenuItem value="refus">Refus</MenuItem>

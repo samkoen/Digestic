@@ -18,6 +18,7 @@ _INVOICE_VIEW_KEY = "invoices"
 _DEFAULT_VISIBLE: list[str] = [
     "invoiceNumber",
     "pharmacyName",
+    "blNumber",
     "amount",
     "issueDate",
     "dueDate",
@@ -28,6 +29,12 @@ _DEFAULT_VISIBLE: list[str] = [
 _INVOICE_TABLE_COLUMNS: list[InvoiceTableColumn] = [
     InvoiceTableColumn("invoiceNumber", "N° facture", True, True),
     InvoiceTableColumn("pharmacyName", "Pharmacie", True, True),
+    InvoiceTableColumn(
+        "blNumber",
+        "N° BL",
+        True,
+        True,
+    ),
     InvoiceTableColumn("amount", "Montant (TTC)", True, False),
     InvoiceTableColumn("issueDate", "Date d’émission", True, False),
     InvoiceTableColumn("dueDate", "Date d’échéance", True, False),
@@ -75,7 +82,11 @@ def normalize_invoice_visible_keys(keys: list[str] | None) -> list[str] | None:
         return None
     out: list[str] = []
     for k in keys:
-        if not isinstance(k, str) or k not in allowed or k in out:
+        if not isinstance(k, str):
+            return None
+        if k == "blDeposit":
+            k = "blNumber"
+        if k not in allowed or k in out:
             return None
         out.append(k)
     return out or None

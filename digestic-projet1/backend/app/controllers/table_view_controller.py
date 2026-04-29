@@ -81,6 +81,41 @@ def put_invoices_table_view(
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+@router.get("/delivery_notes")
+def get_delivery_notes_table_view(db: Session = Depends(get_db)) -> Any:
+    try:
+        return table_view_service.get_delivery_notes_table_view(db)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@router.put("/delivery_notes")
+def put_delivery_notes_table_view(
+    request: Request,
+    body: dict[str, Any] | None = Body(default=None),
+    db: Session = Depends(get_db),
+) -> Any:
+    if not body or not isinstance(body.get("visibleColumnKeys"), list):
+        return JSONResponse(
+            {"error": "visibleColumnKeys (liste) requis"},
+            status_code=400,
+        )
+    try:
+        admin_id = require_admin_user_id(request)
+    except HTTPException as e:
+        return JSONResponse(
+            {"error": str(e.detail)}, status_code=int(e.status_code)
+        )
+    try:
+        return table_view_service.set_delivery_notes_table_view(
+            db, body["visibleColumnKeys"], admin_id
+        )
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 @router.get("/{view_key}/saved-filters")
 def list_saved_filters(
     request: Request,

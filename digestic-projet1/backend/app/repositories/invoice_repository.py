@@ -1,4 +1,5 @@
 import uuid
+from collections import defaultdict
 from datetime import date
 from typing import Any, Optional
 
@@ -12,8 +13,14 @@ from app.models.invoice import Invoice
 from app.pagination import PageResult, offset_for_page, normalize_page_input
 
 
-def _order_clause(sort: str, order: str, i: type[orm.Invoice], p: type[orm.Pharmacy]):
-    """Tri SQL (camelCase -> colonnes, avec pharmacie)."""
+def _order_clause(
+    sort: str,
+    order: str,
+    i: type[orm.Invoice],
+    p: type[orm.Pharmacy],
+    d: type[orm.Deposit],
+):
+    """Tri SQL (camelCase -> colonnes, avec pharmacie et dépôt)."""
     desc_ = (order or "asc").lower() == "desc"
     s = sort if sort in INVOICE_SORT_KEYS else "issueDate"
     col: Any
@@ -29,9 +36,14 @@ def _order_clause(sort: str, order: str, i: type[orm.Invoice], p: type[orm.Pharm
         col = i.amount
     elif s == "status":
         col = i.status
+    elif s == "blNumber":
+        col = d.bl_number
     else:
         col = i.days_overdue
-    return col.desc() if desc_ else col.asc()
+    ob = col.desc() if desc_ else col.asc()
+    if s == "blNumber":
+        ob = ob.nulls_last()
+    return ob
 
 
 class InvoiceRepository:
@@ -55,14 +67,20 @@ class InvoiceRepository:
         pharmacy_name: str | None = None,
         overdue_only: bool = False,
         overdue_min_days: int = 0,
-    ) -> PageResult[tuple[Invoice, str | None]]:
+        deposit_id: str | None = None,
+    ) -> PageResult[tuple[Invoice, str | None, str | None]]:
         p1, ps = normalize_page_input(page, page_size)
         off = offset_for_page(p1, ps)
-        i, ph = orm.Invoice, orm.Pharmacy
+        i, ph, dep = orm.Invoice, orm.Pharmacy, orm.Deposit
         today = date.today()
         skey = sort if sort in INVOICE_SORT_KEYS else "issueDate"
 
-        base = select(i, ph.name).select_from(i).join(ph, i.pharmacy_id == ph.id)
+        base = (
+            select(i, ph.name, dep.bl_number)
+            .select_from(i)
+            .join(ph, i.pharmacy_id == ph.id)
+            .outerjoin(dep, i.deposit_id == dep.id)
+        )
         conds: list[Any] = []
         if status and str(status).strip():
             conds.append(i.status == str(status).strip())
@@ -78,6 +96,13 @@ class InvoiceRepository:
         if pharmacy_name and str(pharmacy_name).strip():
             qph = f"%{str(pharmacy_name).strip()}%"
             conds.append(ph.name.ilike(qph))
+        if deposit_id and str(deposit_id).strip():
+            raw_dep = str(deposit_id).strip()
+            try:
+                conds.append(i.deposit_id == mp.parse_uuid(raw_dep))
+            except ValueError:
+                qbl = f"%{raw_dep}%"
+                conds.append(dep.bl_number.ilike(qbl))
         if overdue_only:
             dmin = max(0, int(overdue_min_days))
             # PG : current_date - date = nb de jours (entier)
@@ -89,18 +114,29 @@ class InvoiceRepository:
         if where is not None:
             base = base.where(where)
 
-        count_q = select(func.count()).select_from(i).join(ph, i.pharmacy_id == ph.id)
+        count_q = (
+            select(func.count())
+            .select_from(i)
+            .join(ph, i.pharmacy_id == ph.id)
+            .outerjoin(dep, i.deposit_id == dep.id)
+        )
         if where is not None:
             count_q = count_q.where(where)
         total = int(self._db.execute(count_q).scalar() or 0)
 
-        ob = _order_clause(skey, order, i, ph)
+        ob = _order_clause(skey, order, i, ph, dep)
         page_q = base.order_by(ob).offset(off).limit(ps)
         raw_rows = self._db.execute(page_q).all()
-        items: list[tuple[Invoice, str | None]] = []
+        items: list[tuple[Invoice, str | None, str | None]] = []
         for row in raw_rows:
-            inv_row, pname = row[0], row[1]
-            items.append((mp.invoice_orm_to_domain(inv_row), str(pname) if pname is not None else None))
+            inv_row, pname, bln = row[0], row[1], row[2]
+            items.append(
+                (
+                    mp.invoice_orm_to_domain(inv_row),
+                    str(pname) if pname is not None else None,
+                    str(bln) if bln is not None else None,
+                )
+            )
         return PageResult(
             items=items,
             total=total,
@@ -191,6 +227,34 @@ class InvoiceRepository:
                 )
             self._db.flush()
         return mp.invoice_orm_to_domain(row)
+
+    def invoice_summaries_by_deposit_ids(
+        self, deposit_ids: list[str]
+    ) -> dict[str, list[dict[str, str]]]:
+        """Pour chaque id de dépôt, liste {id, invoice_number} des factures liées (issue_date desc)."""
+        if not deposit_ids:
+            return {}
+        uuids = []
+        for d in deposit_ids:
+            try:
+                uuids.append(mp.parse_uuid(str(d).strip()))
+            except ValueError:
+                continue
+        if not uuids:
+            return {}
+        rows = self._db.execute(
+            select(orm.Invoice.deposit_id, orm.Invoice.id, orm.Invoice.invoice_number)
+            .where(orm.Invoice.deposit_id.in_(uuids))
+            .order_by(orm.Invoice.issue_date.desc())
+        ).all()
+        out: dict[str, list[dict[str, str]]] = defaultdict(list)
+        for dep_id, iid, num in rows:
+            if dep_id is None:
+                continue
+            out[str(dep_id)].append(
+                {"id": str(iid), "invoice_number": str(num) if num is not None else ""}
+            )
+        return dict(out)
 
     def update(self, id_: str, model: Invoice) -> Optional[Invoice]:
         try:

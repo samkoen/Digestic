@@ -28,6 +28,7 @@ def get_invoices(
     invoice_number: str | None = Query(None),
     pharmacy_name: str | None = Query(None),
     pharmacy_id: str | None = None,
+    deposit_id: str | None = Query(None, description="Filtrer par id du dépôt / bon de livraison"),
     overdue_only: bool = Query(False),
     overdue_min_days: int = Query(0, ge=0, le=3650),
     overdue: bool = False,
@@ -47,11 +48,12 @@ def get_invoices(
                 pharmacy_name=pharmacy_name,
                 overdue_only=overdue_only,
                 overdue_min_days=overdue_min_days,
+                deposit_id=deposit_id,
             )
             return {
                 "items": [
-                    {**inv.to_dict(), "pharmacy_name": pname or ""}
-                    for inv, pname in pr.items
+                    {**inv.to_dict(), "pharmacy_name": pname or "", "bl_number": bln or ""}
+                    for inv, pname, bln in pr.items
                 ],
                 "total": pr.total,
                 "page": pr.page,

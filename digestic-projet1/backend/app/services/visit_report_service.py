@@ -6,10 +6,84 @@ from app.core.payment_modes import DEFAULT_VISIT_REPORT_PAYMENT_MODE
 from app.domain.billing import normalize_billing_type
 from app.domain.expected_return_week import iso_week_and_year_after_n_weeks
 from app.models.visit_report import VisitReport
+from app.repositories.pharmacy_comment_repository import PharmacyCommentRepository
 from app.repositories.visit_report_repository import VisitReportRepository
 from app.repositories.visit_repository import VisitRepository
 from app.repositories.pharmacy_repository import PharmacyRepository
 from app.services.visit_billing_service import VisitBillingOrchestrator
+
+# Aligné sur `visitReportForm.js` (VISIT_NOT_COMPLETED_REASON_LABELS)
+_VISIT_NOT_COMPLETED_REASON_FR: dict[str, str] = {
+    "pharmacy_closed": "Pharmacie fermée",
+    "owner_absent": "Titulaire absent",
+    "refus": "Refus",
+}
+
+_VISIT_NOT_COMPLETED_REASON_REQUIRED = (
+    "La raison est obligatoire lorsque la visite n'est pas effectuée."
+)
+
+
+def _require_visit_not_completed_reason_if_applicable(
+    visit_status: str | None, visit_not_completed_reason: str | None
+) -> None:
+    if (visit_status or "completed") == "not_completed":
+        if not (visit_not_completed_reason or "").strip():
+            raise ValueError(_VISIT_NOT_COMPLETED_REASON_REQUIRED)
+
+
+def _pharmacy_comment_text_from_visit_report(report: VisitReport) -> Optional[str]:
+    """Construit le texte du commentaire fiche pharmacie (extrait du rapport de visite)."""
+    parts: list[str] = []
+    vdate = (report.visit_date or "").strip()
+    if vdate and "T" in vdate:
+        vdate = vdate.split("T", 1)[0]
+    date_fr = ""
+    if len(vdate) >= 10 and vdate[4] == "-" and vdate[7] == "-":
+        try:
+            y, m, d = vdate[0:4], vdate[5:7], vdate[8:10]
+            date_fr = f"{d}/{m}/{y}"
+        except (IndexError, ValueError):
+            pass
+    if date_fr:
+        parts.append(f"Rapport de visite — {date_fr}")
+    else:
+        parts.append("Rapport de visite")
+
+    if (report.visit_status or "completed") == "not_completed":
+        parts.append("La visite n'a pas été effectuée.")
+        rcode = (report.visit_not_completed_reason or "").strip()
+        if rcode:
+            rlabel = _VISIT_NOT_COMPLETED_REASON_FR.get(rcode, rcode)
+            parts.append(f"Raison : {rlabel}")
+        else:
+            parts.append("Raison : non précisée")
+
+    x = int(report.bottles_deposited or 0)
+    y = int(report.free_units or 0)
+    show_depot = report.visit_status == "completed" and (
+        x > 0 or y > 0 or bool(report.has_deposit)
+    )
+    if show_depot:
+        b = f"{x} bouteille" + ("" if x == 1 else "s")
+        parts.append(f"Déposé {b}, {y} UG")
+
+    note = (report.notes or "").strip()
+    if note:
+        parts.append(f"Note : {note}")
+    vurl = (report.voice_note_url or "").strip()
+    if vurl:
+        parts.append(f"Note audio : {vurl}")
+    photourl = (report.photo_note_url or "").strip()
+    if photourl:
+        parts.append(f"Note photo : {photourl}")
+    urlv = (report.video_note_url or "").strip()
+    if urlv:
+        parts.append(f"Note vidéo : {urlv}")
+
+    if len(parts) == 1:
+        return None
+    return "\n".join(parts)
 
 class VisitReportService:
     """Service pour la gestion des rapports de visite"""
@@ -20,11 +94,13 @@ class VisitReportService:
         visit_report_repo: VisitReportRepository,
         visit_repo: VisitRepository,
         pharmacy_repo: PharmacyRepository,
+        pharmacy_comment_repo: PharmacyCommentRepository,
     ):
         self._db = db
         self.visit_report_repo = visit_report_repo
         self.visit_repo = visit_repo
         self.pharmacy_repo = pharmacy_repo
+        self._pharmacy_comments = pharmacy_comment_repo
     
     def get_all_reports(self) -> List[VisitReport]:
         """Récupère tous les rapports"""
@@ -82,6 +158,11 @@ class VisitReportService:
         if rsrc is not None and str(rsrc).strip() == '':
             report_data['return_source_visit_report_id'] = None
 
+        _require_visit_not_completed_reason_if_applicable(
+            report_data.get("visit_status"),
+            report_data.get("visit_not_completed_reason"),
+        )
+
         if report_data.get('has_deposit') and report_data.get('bottles_deposited', 0) > 0:
             if not report_data.get('payment_mode'):
                 pharmacy = self.pharmacy_repo.find_by_id(report_data.get('pharmacy_id'))
@@ -104,6 +185,10 @@ class VisitReportService:
             if visit:
                 visit.status = "completed"
                 self.visit_repo.update(visit.id, visit)
+
+        comment_text = _pharmacy_comment_text_from_visit_report(saved)
+        if comment_text:
+            self._pharmacy_comments.create(saved.pharmacy_id, comment_text)
 
         return saved
     
@@ -135,6 +220,10 @@ class VisitReportService:
                 setattr(existing, key, value)
         
         from datetime import datetime
+        _require_visit_not_completed_reason_if_applicable(
+            existing.visit_status, existing.visit_not_completed_reason
+        )
+
         existing.updated_at = datetime.now().isoformat()
         existing.synced = True  # Marquer comme synchronisé lors de la mise à jour
         

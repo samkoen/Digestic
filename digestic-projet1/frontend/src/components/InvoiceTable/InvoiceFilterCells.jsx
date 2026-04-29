@@ -69,5 +69,18 @@ export function InvoiceFilterCell(p) {
       </AlignedTableCell>
     )
   }
+  if (columnKey === 'blNumber') {
+    return (
+      <AlignedTableCell width={w} dense sx={filterSx}>
+        <TextField
+          value={filters.depositId}
+          onChange={(e) => onChange('depositId', e.target.value)}
+          size="small"
+          fullWidth
+          placeholder="N° BL ou UUID…"
+        />
+      </AlignedTableCell>
+    )
+  }
   return <AlignedTableCell width={w} dense sx={filterSx} />
 }

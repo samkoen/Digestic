@@ -95,6 +95,7 @@ class InvoiceService:
         pharmacy_name: str | None = None,
         overdue_only: bool = False,
         overdue_min_days: int = 0,
+        deposit_id: str | None = None,
     ) -> Any:
         """Liste paginée avec tri et filtres (jointure pharmacie pour le nom)."""
         return self.repository.search_paginated(
@@ -108,6 +109,7 @@ class InvoiceService:
             pharmacy_name=pharmacy_name,
             overdue_only=overdue_only,
             overdue_min_days=overdue_min_days,
+            deposit_id=deposit_id,
         )
 
     def fetch_vosfactures_pdf(self, invoice_id: str) -> tuple[bytes, str] | None:

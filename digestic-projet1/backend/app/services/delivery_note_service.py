@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from sqlalchemy.orm import Session
 
@@ -73,6 +73,83 @@ class DeliveryNoteService:
 
     def get_delivery_notes_by_commercial(self, commercial_id: str) -> List[DeliveryNote]:
         return self.repository.find_by_commercial(commercial_id)
+
+    def list_delivery_notes_paginated(
+        self,
+        *,
+        user_role: str | None,
+        user_id_str: str | None,
+        page: int = 1,
+        page_size: int = 20,
+        sort: str = "deliveryDate",
+        order: str = "desc",
+        pharmacy_id: list[str] | None = None,
+        commercial_id: list[str] | None = None,
+        status: str | None = None,
+        delivery_date_from: str | None = None,
+        delivery_date_to: str | None = None,
+        deposit_id: str | None = None,
+        pharmacy_name: str | None = None,
+        include_archived: bool = False,
+        sage_reference: str | None = None,
+        is_deposit_sale: bool | None = None,
+        email_sent: str | None = None,
+    ) -> dict[str, Any]:
+        """Liste paginée (filtres + tri) ; commercial limité à ses BL."""
+        restricted: str | None = None
+        if user_role == "commercial" and user_id_str:
+            restricted = str(user_id_str)
+
+        d_from: date | None = None
+        d_to: date | None = None
+        if delivery_date_from and str(delivery_date_from).strip():
+            try:
+                d_from = mp.parse_date(str(delivery_date_from).strip())
+            except ValueError:
+                d_from = None
+        if delivery_date_to and str(delivery_date_to).strip():
+            try:
+                d_to = mp.parse_date(str(delivery_date_to).strip())
+            except ValueError:
+                d_to = None
+
+        eff_archived = include_archived or bool(deposit_id and str(deposit_id).strip())
+
+        pr = self.repository.search_paginated(
+            page=page,
+            page_size=page_size,
+            sort=sort,
+            order=order,
+            pharmacy_ids=list(pharmacy_id) if pharmacy_id else None,
+            commercial_ids=list(commercial_id) if commercial_id else None,
+            status=status,
+            delivery_date_from=d_from,
+            delivery_date_to=d_to,
+            deposit_id=deposit_id,
+            pharmacy_name=pharmacy_name,
+            include_archived=eff_archived,
+            sage_reference=sage_reference,
+            is_deposit_sale=is_deposit_sale,
+            email_sent=email_sent,
+            restricted_to_commercial_id=restricted,
+        )
+        ids = [str(r.deposit.id) for r in pr.items]
+        sm = self._invoice_repo.invoice_summaries_by_deposit_ids(ids)
+        items: list[dict[str, Any]] = []
+        for r in pr.items:
+            note = mp.deposit_orm_to_note(r.deposit)
+            d = note.to_dict()
+            d["pharmacy_name"] = r.pharmacy_name
+            cname = f"{r.commercial_first_name} {r.commercial_last_name}".strip()
+            d["commercial_name"] = cname
+            d["linked_invoices"] = sm.get(note.id, [])
+            items.append(d)
+        return {
+            "items": items,
+            "total": pr.total,
+            "page": pr.page,
+            "page_size": pr.page_size,
+        }
 
     def issue_invoice_from_delivery_note(
         self, note_id: str, bottles_to_invoice: int, amount: float
@@ -187,6 +264,7 @@ class DeliveryNoteService:
 
         inv_num = f"FAC-{issue_d.strftime('%Y%m')}-{uuid.uuid4().hex[:8].upper()}"
         issuer = get_vosfactures_invoice_issuer()
+        public_ref = (note.sage_reference or "").strip() or None
         vf = issuer.issue_vat_invoice(
             draft_invoice_number=inv_num,
             pharmacy=pharmacy,
@@ -196,8 +274,10 @@ class DeliveryNoteService:
             lines=mock_lines,
             totals=totals,
             billing_type="from_delivery_note",
-            deposit_reference=str(note.id),
+            internal_deposit_id=str(note.id),
+            invoice_public_reference=public_ref,
             currency=str(product_row.currency or "EUR"),
+            digestic_bl_number=(note.bl_number or "").strip() or None,
         )
 
         inv = Invoice(
@@ -227,9 +307,17 @@ class DeliveryNoteService:
             note.updated_at = datetime.now().isoformat()
             next_note = self.repository.update(note.id, note)
         else:
-            if self.repository.delete(note.id):
-                next_note = None
-            else:
-                next_note = None
+            # Ne pas supprimer le dépôt : la FK invoices.deposit_id est ON DELETE SET NULL,
+            # ce qui effacerait le lien BL ↔ facture. On clôture le bon (0 bouteilles, visible en liste).
+            note.bottles_count = 0
+            note.status = "fully_invoiced"
+            note.updated_at = datetime.now().isoformat()
+            next_note = self.repository.update(note.id, note)
 
         return created, next_note
+
+    def build_delivery_note_pdf(self, note_id: str) -> tuple[bytes, str] | None:
+        """PDF « Sage-like » pour le dépôt (lignes produits + totaux TVA)."""
+        from app.pdf.delivery_note_pdf import build_delivery_note_pdf
+
+        return build_delivery_note_pdf(self._db, note_id)

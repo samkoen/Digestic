@@ -21,7 +21,7 @@ import EditIcon from '@mui/icons-material/Edit'
 import VisibilityIcon from '@mui/icons-material/Visibility'
 import DeleteIcon from '@mui/icons-material/Delete'
 import ViewColumnIcon from '@mui/icons-material/ViewColumn'
-import { format } from 'date-fns'
+import { format, parseISO } from 'date-fns'
 import { pharmacyService, fetchPharmacyDistinctCities } from '../../services/pharmacyService'
 import { userService } from '../../services/userService'
 import { depotService } from '../../services/depotService'
@@ -373,6 +373,10 @@ function Pharmacies() {
       return '-'
     }
     try {
+      const s = String(dateString).trim()
+      if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+        return format(parseISO(s.slice(0, 10)), 'dd/MM/yyyy')
+      }
       return format(new Date(dateString), 'dd/MM/yyyy')
     } catch {
       return dateString
@@ -381,9 +385,15 @@ function Pharmacies() {
 
   const handleNextVisitClick = useCallback((ph) => {
     setEditingNextVisitId(ph.id)
-    const dateValue = ph.nextVisitDate
-      ? format(new Date(ph.nextVisitDate), 'yyyy-MM-dd')
-      : ''
+    let dateValue = ''
+    if (ph.nextVisitDate) {
+      const s = String(ph.nextVisitDate).trim()
+      if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+        dateValue = s.slice(0, 10)
+      } else {
+        dateValue = format(new Date(ph.nextVisitDate), 'yyyy-MM-dd')
+      }
+    }
     setEditingNextVisitValue(dateValue)
     setShouldSaveOnBlur(true)
   }, [])
@@ -399,12 +409,11 @@ function Pharmacies() {
         return
       }
       try {
-        let isoDate = null
-        if (editingNextVisitValue) {
-          const d = new Date(editingNextVisitValue)
-          d.setHours(0, 0, 0, 0)
-          isoDate = d.toISOString()
-        }
+        const trimmed = String(editingNextVisitValue || '').trim()
+        // input type="date" = YYYY-MM-DD (jour civil local). Passer par Date/toISOString
+        // décale d’un jour en fin de journée UTC (ex. 28/4 → 27/4 stocké).
+        const isoDate =
+          trimmed && /^\d{4}-\d{2}-\d{2}$/.test(trimmed) ? trimmed : null
         await pharmacyService.update(pharmacyId, { next_visit_date: isoDate })
         setEditingNextVisitId(null)
         setEditingNextVisitValue('')

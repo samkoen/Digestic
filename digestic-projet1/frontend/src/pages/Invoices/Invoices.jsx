@@ -31,6 +31,7 @@ import {
   buildInvoiceListQueryParams,
   getInitialInvoiceFiltersState,
   invoiceFiltersFromPayload,
+  parseDepositFilterFromSearchParams,
   parsePharmacyFilterFromSearchParams,
 } from '../../utils/invoiceListQueryParams'
 import {
@@ -47,6 +48,7 @@ const headerCellTextSx = { fontSize: '0.75rem', fontWeight: 600 }
 const DEFAULT_VISIBLE_COLUMNS = [
   'invoiceNumber',
   'pharmacyName',
+  'blNumber',
   'amount',
   'issueDate',
   'dueDate',
@@ -58,7 +60,7 @@ function hasDirtyFilters(tab, f) {
   if (tab === 1) {
     return true
   }
-  if (f.invoiceNumber || f.pharmacyName || f.pharmacyId || f.status) {
+  if (f.invoiceNumber || f.pharmacyName || f.pharmacyId || f.depositId || f.status) {
     return true
   }
   if (f.overdueOnly) {
@@ -293,17 +295,19 @@ function Invoices() {
     }
   }, [])
 
-  /** Navigation interne (ex. autre pharmacie) : sync query string → filtres */
+  /** Navigation interne (ex. fiche pharmacie, lien depuis un BL) : sync query → filtres */
   useEffect(() => {
-    const extra = parsePharmacyFilterFromSearchParams(searchParams)
-    if (!extra) {
+    const extraP = parsePharmacyFilterFromSearchParams(searchParams)
+    const extraD = parseDepositFilterFromSearchParams(searchParams)
+    if (!extraP && !extraD) {
       return
     }
+    const merged = { ...(extraP || {}), ...(extraD || {}) }
     setPage(0)
     setTab(0)
     setActiveSavedFilterId(null)
-    setFilters((prev) => ({ ...prev, ...extra }))
-    setDebouncedFilters((prev) => ({ ...prev, ...extra }))
+    setFilters((prev) => ({ ...prev, ...merged }))
+    setDebouncedFilters((prev) => ({ ...prev, ...merged }))
   }, [searchParams])
 
   useEffect(() => {
@@ -404,7 +408,7 @@ function Invoices() {
     setFilters(next)
     setDebouncedFilters(next)
     if (pl.orderBy) {
-      setOrderBy(pl.orderBy)
+      setOrderBy(pl.orderBy === 'blDeposit' ? 'blNumber' : pl.orderBy)
     }
     if (pl.order) {
       setOrder(pl.order)

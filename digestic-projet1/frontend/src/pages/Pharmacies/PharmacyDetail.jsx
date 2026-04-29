@@ -40,10 +40,11 @@ import { invoiceService } from '../../services/invoiceService'
 import { visitReportService } from '../../services/visitReportService'
 import VisitReportList from '../../components/VisitReportList/VisitReportList'
 import VisitReportDetail from '../../components/VisitReportDetail/VisitReportDetail'
+import PharmacyCommentBody from '../../components/PharmacyCommentBody/PharmacyCommentBody'
 import InvoiceList from '../../components/InvoiceList/InvoiceList'
 import InvoiceDetail from '../../components/InvoiceDetail/InvoiceDetail'
 import { PAYMENT_MODES, DEFAULT_PAYMENT_MODE } from '../../constants/paymentModes'
-import { WEEKS_UNTIL_RETURN_OPTIONS } from '../../constants/visitReportForm'
+import { WEEKS_UNTIL_RETURN_OPTIONS, validateVisitNotCompletedReason } from '../../constants/visitReportForm'
 import ResizableTextField from '../../components/ResizableTextField/ResizableTextField'
 import PharmacyForm from '../../components/PharmacyForm/PharmacyForm'
 
@@ -176,6 +177,14 @@ function PharmacyDetail() {
 
   const handleCreateReport = async () => {
     try {
+      const reasonErr = validateVisitNotCompletedReason(
+        reportFormData.visit_status,
+        reportFormData.visit_not_completed_reason
+      )
+      if (reasonErr) {
+        alert(reasonErr)
+        return
+      }
       const plannedVisits = visits.filter((v) => v.status === 'planned')
       const visitId = plannedVisits.length > 0 ? plannedVisits[0].id : null
 
@@ -443,7 +452,17 @@ function PharmacyDetail() {
               <Typography>
                 <strong>Statut:</strong> {getPharmacyStatusLabel(pharmacy.status)}
               </Typography>
-              <Typography><strong>Prochaine visite:</strong> {pharmacy.next_visit_date ? format(new Date(pharmacy.next_visit_date), 'dd/MM/yyyy') : '-'}</Typography>
+              <Typography>
+                <strong>Prochaine visite:</strong>{' '}
+                {pharmacy.next_visit_date
+                  ? format(
+                      /^\d{4}-\d{2}-\d{2}/.test(String(pharmacy.next_visit_date).trim())
+                        ? parseISO(String(pharmacy.next_visit_date).trim().slice(0, 10))
+                        : new Date(pharmacy.next_visit_date),
+                      'dd/MM/yyyy',
+                    )
+                  : '-'}
+              </Typography>
             </CardContent>
           </Card>
           <Card>
@@ -591,9 +610,9 @@ function PharmacyDetail() {
                     >
                       <ListItemText
                         primary={formatCommentDate(c.created_at)}
-                        secondary={c.text}
+                        secondary={<PharmacyCommentBody text={c.text} />}
                         primaryTypographyProps={{ variant: 'caption', color: 'text.secondary' }}
-                        secondaryTypographyProps={{ variant: 'body2', color: 'text.primary', whiteSpace: 'pre-wrap' }}
+                        secondaryTypographyProps={{ component: 'div' }}
                       />
                     </ListItem>
                   ))
@@ -722,12 +741,18 @@ function PharmacyDetail() {
               <Grid item xs={12} sm={6}>
                 <ResizableTextField
                   fullWidth
+                  required
                   select
                   label="Raison"
                   name="visit_not_completed_reason"
                   value={reportFormData.visit_not_completed_reason}
                   onChange={handleReportFormChange}
+                  InputLabelProps={{ shrink: true }}
+                  SelectProps={{ displayEmpty: true }}
                 >
+                  <MenuItem value="">
+                    <em>Choisir une raison</em>
+                  </MenuItem>
                   <MenuItem value="pharmacy_closed">Pharmacie fermée</MenuItem>
                   <MenuItem value="owner_absent">Titulaire absent</MenuItem>
                   <MenuItem value="refus">Refus</MenuItem>

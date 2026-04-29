@@ -1,16 +1,19 @@
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Body, Depends, Query, Request
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.dependencies import get_db
+from app.domain.delivery_note_table_columns import DELIVERY_NOTE_SORT_KEYS
+from app.pagination import MAX_PAGE_SIZE
 from app.repositories.delivery_note_repository import DeliveryNoteRepository
 from app.repositories.invoice_repository import InvoiceRepository
 from app.repositories.pharmacy_repository import PharmacyRepository
 from app.services.delivery_note_service import DeliveryNoteService
+from app.pdf.delivery_note_pdf import pdf_content_disposition_header
 
 logger = logging.getLogger(__name__)
 
@@ -28,18 +31,72 @@ def get_delivery_note_service(db: Session = Depends(get_db)) -> DeliveryNoteServ
 
 @router.get("")
 def get_delivery_notes(
-    pharmacy_id: str | None = None,
-    commercial_id: str | None = None,
+    request: Request,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=MAX_PAGE_SIZE),
+    sort: str = Query("deliveryDate"),
+    order: str = Query("desc"),
+    pharmacy_id: list[str] | None = Query(None),
+    commercial_id: list[str] | None = Query(None),
+    status: str | None = None,
+    delivery_date_from: str | None = None,
+    delivery_date_to: str | None = None,
+    deposit_id: str | None = None,
+    pharmacy_name: str | None = None,
+    include_archived: bool = Query(False),
+    sage_reference: str | None = None,
+    is_deposit_sale: bool | None = None,
+    email_sent: str | None = None,
     service: DeliveryNoteService = Depends(get_delivery_note_service),
 ):
     try:
-        if pharmacy_id:
-            notes = service.get_delivery_notes_by_pharmacy(pharmacy_id)
-        elif commercial_id:
-            notes = service.get_delivery_notes_by_commercial(commercial_id)
-        else:
-            notes = service.get_all_delivery_notes()
-        return [note.to_dict() for note in notes]
+        if order.lower() not in ("asc", "desc"):
+            order = "desc"
+        skey = sort if sort in DELIVERY_NOTE_SORT_KEYS else "deliveryDate"
+        role = request.session.get("user_role")
+        uid = request.session.get("user_id")
+        return service.list_delivery_notes_paginated(
+            user_role=role,
+            user_id_str=str(uid) if uid else None,
+            page=page,
+            page_size=page_size,
+            sort=skey,
+            order=order,
+            pharmacy_id=pharmacy_id,
+            commercial_id=commercial_id,
+            status=status,
+            delivery_date_from=delivery_date_from,
+            delivery_date_to=delivery_date_to,
+            deposit_id=deposit_id,
+            pharmacy_name=pharmacy_name,
+            include_archived=include_archived,
+            sage_reference=sage_reference,
+            is_deposit_sale=is_deposit_sale,
+            email_sent=email_sent,
+        )
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@router.get("/{note_id}/pdf")
+def download_delivery_note_pdf(
+    note_id: str,
+    service: DeliveryNoteService = Depends(get_delivery_note_service),
+):
+    """Télécharge le PDF du bon (mise en forme proche facture / BL Digestic)."""
+    try:
+        result = service.build_delivery_note_pdf(note_id)
+        if not result:
+            return JSONResponse(
+                {"error": "Bon de livraison non trouvé"},
+                status_code=404,
+            )
+        data, filename = result
+        return Response(
+            content=data,
+            media_type="application/pdf",
+            headers={"Content-Disposition": pdf_content_disposition_header(filename)},
+        )
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 

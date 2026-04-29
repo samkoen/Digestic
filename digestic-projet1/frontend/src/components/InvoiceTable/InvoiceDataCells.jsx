@@ -1,5 +1,6 @@
 import React from 'react'
-import { Chip, Typography, CircularProgress, IconButton, Tooltip, TableCell } from '@mui/material'
+import { Chip, Link, Typography, CircularProgress, IconButton, Tooltip, TableCell } from '@mui/material'
+import { Link as RouterLink } from 'react-router-dom'
 import DownloadIcon from '@mui/icons-material/Download'
 import { AlignedTableCell } from '../ResizableTableColumns/ResizableHeaderCell'
 
@@ -42,6 +43,49 @@ export function InvoiceTableBodyCell(p) {
         >
           {invoice.pharmacy_name || '—'}
         </Typography>
+      </AlignedTableCell>
+    )
+  }
+  if (columnKey === 'blNumber') {
+    const did = invoice.deposit_id
+    const label = (invoice.bl_number || '').trim()
+    if (!label && !did) {
+      return (
+        <AlignedTableCell width={w}>
+          <Typography variant="body2" color="text.secondary">
+            —
+          </Typography>
+        </AlignedTableCell>
+      )
+    }
+    const display = label || '—'
+    if (!did) {
+      return (
+        <AlignedTableCell width={w}>
+          <Typography variant="body2" noWrap title={display}>
+            {display}
+          </Typography>
+        </AlignedTableCell>
+      )
+    }
+    const blUrl = `/delivery-notes?deposit_id=${encodeURIComponent(did)}`
+    return (
+      <AlignedTableCell width={w}>
+        <Link
+          component={RouterLink}
+          to={blUrl}
+          variant="body2"
+          title={label ? `Bon de livraison : ${label}` : `Dépôt : ${did}`}
+          underline="hover"
+          sx={{
+            display: 'block',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {display}
+        </Link>
       </AlignedTableCell>
     )
   }

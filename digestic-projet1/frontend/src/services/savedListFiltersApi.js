@@ -3,7 +3,7 @@ import api from './api'
 /**
  * Client API pour GET/POST/DELETE /table-views/{viewKey}/saved-filters
  * (même forme que les filtres enregistrés pharmacies).
- * @param {string} viewKey - ex. 'pharmacies' | 'invoices'
+ * @param {string} viewKey - ex. 'pharmacies' | 'invoices' | 'delivery_notes'
  */
 export function createSavedListFiltersClient(viewKey) {
   const base = `/table-views/${viewKey}/saved-filters`
@@ -38,4 +38,12 @@ export function getInvoiceSavedFiltersClient() {
     _invoiceClient = createSavedListFiltersClient('invoices')
   }
   return _invoiceClient
+}
+
+let _deliveryNotesClient
+export function getDeliveryNotesSavedFiltersClient() {
+  if (!_deliveryNotesClient) {
+    _deliveryNotesClient = createSavedListFiltersClient('delivery_notes')
+  }
+  return _deliveryNotesClient
 }

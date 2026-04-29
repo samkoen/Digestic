@@ -5,6 +5,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.domain.delivery_note_table_columns import DELIVERY_NOTE_SORT_KEYS
 from app.domain.invoice_table_columns import INVOICE_SORT_KEYS
 from app.domain.pharmacy_table_columns import PHARMACY_SORT_KEYS
 from app.db import mappers as mp
@@ -12,7 +13,10 @@ from app.repositories import saved_list_filter_repository as repo
 
 VIEW_PHARMACIES = "pharmacies"
 VIEW_INVOICES = "invoices"
-ALLOWED_VIEWS: frozenset[str] = frozenset({VIEW_PHARMACIES, VIEW_INVOICES})
+VIEW_DELIVERY_NOTES = "delivery_notes"
+ALLOWED_VIEWS: frozenset[str] = frozenset(
+    {VIEW_PHARMACIES, VIEW_INVOICES, VIEW_DELIVERY_NOTES}
+)
 
 # --- Pharmacies (même logique qu’ex-pharmacy_saved_filter_service) ---
 
@@ -96,6 +100,7 @@ def _empty_invoice_filter_dict() -> dict[str, Any]:
         "invoiceNumber": "",
         "pharmacyName": "",
         "pharmacyId": "",
+        "depositId": "",
         "status": "",
         "overdueOnly": False,
         "overdueMinDays": 30,
@@ -124,13 +129,15 @@ def _sanitize_invoice_filters(raw: Any) -> dict[str, Any]:
                 out[k] = max(0, min(d, 3650))
             except (TypeError, ValueError):
                 out[k] = 30
-        elif k in ("invoiceNumber", "pharmacyName", "pharmacyId", "status"):
+        elif k in ("invoiceNumber", "pharmacyName", "pharmacyId", "depositId", "status"):
             out[k] = str(v or "").strip() if v is not None else ""
     return out
 
 
 def _invoice_sort_payload(order_by: Any, order: Any) -> tuple[str, str]:
     ob = str(order_by).strip() if order_by is not None else "issueDate"
+    if ob == "blDeposit":
+        ob = "blNumber"
     if ob not in INVOICE_SORT_KEYS:
         ob = "issueDate"
     return ob, _order_dir(order)
@@ -143,6 +150,96 @@ def _build_invoice_payload(body: dict[str, Any] | None) -> dict[str, Any]:
     return {"filters": filters, "orderBy": ob, "order": o}
 
 
+# --- Bons de livraison ---
+
+
+def _empty_delivery_note_filter_dict() -> dict[str, Any]:
+    return {
+        "commercial": [],
+        "pharmacyName": "",
+        "status": "",
+        "deliveryDate": "",
+        "depositId": "",
+        "includeArchived": False,
+        "sageReference": "",
+        "isDepositSale": "",
+        "emailSent": "",
+    }
+
+
+_DN_MULTI = frozenset({"commercial"})
+_DN_ALLOWED = frozenset(_empty_delivery_note_filter_dict().keys())
+
+
+def _sanitize_delivery_note_filters(raw: Any) -> dict[str, Any]:
+    out = _empty_delivery_note_filter_dict()
+    if not isinstance(raw, dict):
+        return out
+    src = dict(raw)
+    if "commercialIds" in src and "commercial" not in src:
+        src["commercial"] = src.get("commercialIds")
+    d_val = str(src.get("deliveryDate") or "").strip()
+    if not d_val and (
+        src.get("deliveryDateFrom") is not None or src.get("deliveryDateTo") is not None
+    ):
+        a = str(src.get("deliveryDateFrom") or "").strip()
+        b = str(src.get("deliveryDateTo") or "").strip()
+        if a and b and a == b:
+            src["deliveryDate"] = a
+        elif a and not b:
+            src["deliveryDate"] = a
+        elif b and not a:
+            src["deliveryDate"] = b
+        elif a and b:
+            src["deliveryDate"] = a
+    for k in _DN_ALLOWED:
+        if k not in src:
+            continue
+        v = src[k]
+        if k in _DN_MULTI:
+            if isinstance(v, list):
+                out[k] = [str(x).strip() for x in v if str(x).strip()]
+            elif isinstance(v, str) and v.strip():
+                out[k] = [v.strip()]
+            elif v is None:
+                out[k] = []
+            else:
+                t = str(v).strip()
+                out[k] = [t] if t else []
+        elif k == "includeArchived":
+            if v is True or v is False:
+                out[k] = v
+            elif isinstance(v, str):
+                out[k] = v.strip().lower() in ("1", "true", "yes", "oui", "y")
+            else:
+                out[k] = False
+        elif k in (
+            "pharmacyName",
+            "status",
+            "deliveryDate",
+            "depositId",
+            "sageReference",
+            "isDepositSale",
+            "emailSent",
+        ):
+            out[k] = str(v or "").strip() if v is not None else ""
+    return out
+
+
+def _delivery_note_sort_payload(order_by: Any, order: Any) -> tuple[str, str]:
+    ob = str(order_by).strip() if order_by is not None else "deliveryDate"
+    if ob not in DELIVERY_NOTE_SORT_KEYS:
+        ob = "deliveryDate"
+    return ob, _order_dir(order)
+
+
+def _build_delivery_note_payload(body: dict[str, Any] | None) -> dict[str, Any]:
+    b = body or {}
+    filters = _sanitize_delivery_note_filters(b.get("filters"))
+    ob, o = _delivery_note_sort_payload(b.get("orderBy"), b.get("order"))
+    return {"filters": filters, "orderBy": ob, "order": o}
+
+
 def build_payload_for_view(
     view_key: str, body: dict[str, Any] | None
 ) -> dict[str, Any]:
@@ -150,6 +247,8 @@ def build_payload_for_view(
         return _build_pharmacy_payload(body)
     if view_key == VIEW_INVOICES:
         return _build_invoice_payload(body)
+    if view_key == VIEW_DELIVERY_NOTES:
+        return _build_delivery_note_payload(body)
     raise ValueError("vue inconnue")
 
 

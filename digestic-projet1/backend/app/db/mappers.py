@@ -185,6 +185,7 @@ def deposit_orm_to_note(d: orm.Deposit) -> DeliveryNote:
         is_deposit_sale=d.is_deposit_sale,
         status=d.status,
         sage_reference=d.reference_external,
+        bl_number=getattr(d, "bl_number", None),
         email_sent=d.email_sent,
         email_sent_at=at_s,
         created_at=parse_datetime_iso(d.created_at) if d.created_at else None,

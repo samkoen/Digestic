@@ -1,7 +1,7 @@
 import api from './api'
 
 /**
- * @param {string} viewKey - ex. 'pharmacies' | 'invoices'
+ * @param {string} viewKey - ex. 'pharmacies' | 'invoices' | 'delivery_notes'
  * @returns {{ fetch: () => Promise, save: (visibleColumnKeys: string[]) => Promise }}
  */
 export function createTableViewClient(viewKey) {
@@ -20,6 +20,7 @@ export function createTableViewClient(viewKey) {
 
 const _pharmacy = createTableViewClient('pharmacies')
 const _invoice = createTableViewClient('invoices')
+const _deliveryNotes = createTableViewClient('delivery_notes')
 
 /**
  * @returns {Promise<{ viewKey: string, definition: Array, visibleColumnKeys: string[] }>}
@@ -41,4 +42,12 @@ export async function fetchInvoiceTableView() {
 
 export async function saveInvoiceTableView(visibleColumnKeys) {
   return _invoice.save(visibleColumnKeys)
+}
+
+export async function fetchDeliveryNotesTableView() {
+  return _deliveryNotes.fetch()
+}
+
+export async function saveDeliveryNotesTableView(visibleColumnKeys) {
+  return _deliveryNotes.save(visibleColumnKeys)
 }

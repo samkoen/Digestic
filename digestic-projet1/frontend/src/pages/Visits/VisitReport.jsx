@@ -19,7 +19,7 @@ import { visitReportService } from '../../services/visitReportService'
 import { visitService } from '../../services/visitService'
 import { pharmacyService } from '../../services/pharmacyService'
 import { PAYMENT_MODES, DEFAULT_PAYMENT_MODE } from '../../constants/paymentModes'
-import { WEEKS_UNTIL_RETURN_OPTIONS } from '../../constants/visitReportForm'
+import { WEEKS_UNTIL_RETURN_OPTIONS, validateVisitNotCompletedReason } from '../../constants/visitReportForm'
 
 function VisitReport() {
   const { visitId } = useParams()
@@ -112,6 +112,14 @@ function VisitReport() {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
+    const reasonErr = validateVisitNotCompletedReason(
+      formData.visit_status,
+      formData.visit_not_completed_reason
+    )
+    if (reasonErr) {
+      alert(reasonErr)
+      return
+    }
     try {
       const { weeks_until_return, ...rest } = formData
       const reportData = {
@@ -185,13 +193,18 @@ function VisitReport() {
                 <Grid item xs={12} sm={6}>
                   <TextField
                     fullWidth
+                    required
                     select
                     label="Raison"
                     name="visit_not_completed_reason"
                     value={formData.visit_not_completed_reason}
                     onChange={handleChange}
                     InputLabelProps={{ shrink: true }}
+                    SelectProps={{ displayEmpty: true }}
                   >
+                    <MenuItem value="">
+                      <em>Choisir une raison</em>
+                    </MenuItem>
                     <MenuItem value="pharmacy_closed">Pharmacie fermée</MenuItem>
                     <MenuItem value="owner_absent">Titulaire absent</MenuItem>
                     <MenuItem value="refus">Refus</MenuItem>

@@ -88,10 +88,17 @@ class PharmacyRepository:
                 orm.Pharmacy.city != "",
             )
             .distinct()
-            .order_by(orm.Pharmacy.city.asc())
         )
         rows = self._db.execute(q).scalars().all()
-        return [str(r).strip() for r in rows if r and str(r).strip()]
+        by_fold: dict[str, str] = {}
+        for r in rows:
+            s = str(r).strip()
+            if not s:
+                continue
+            k = s.casefold()
+            # Une entrée par ville, libellé harmonisé (Nice / nice / NICE → Nice)
+            by_fold[k] = s.title()
+        return sorted(by_fold.values(), key=lambda x: x.casefold())
 
     def search_paginated(
         self,

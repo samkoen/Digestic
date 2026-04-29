@@ -15,6 +15,18 @@ export function getVisitNotCompletedReasonLabel(code) {
   return VISIT_NOT_COMPLETED_REASON_LABELS[code] || code
 }
 
+/** Message d’erreur (aligné sur l’API) si le statut est « non effectuée » sans raison. */
+export const MSG_VISIT_NOT_COMPLETED_REASON_REQUIRED =
+  "La raison est obligatoire lorsque la visite n'est pas effectuée."
+
+/** @returns {string | null} message d'erreur ou null si valide */
+export function validateVisitNotCompletedReason(visitStatus, visitNotCompletedReason) {
+  if (visitStatus === 'not_completed' && !String(visitNotCompletedReason || '').trim()) {
+    return MSG_VISIT_NOT_COMPLETED_REASON_REQUIRED
+  }
+  return null
+}
+
 export function formatExpectedReturnIso(year, week) {
   if (year == null || week == null) return null
   return `Semaine ISO ${week} · ${year}`

@@ -5,6 +5,7 @@ export const EMPTY_INVOICE_FILTERS = {
   invoiceNumber: '',
   pharmacyName: '',
   pharmacyId: '',
+  depositId: '',
   status: '',
   overdueOnly: false,
   overdueMinDays: 30,
@@ -34,14 +35,34 @@ export function parsePharmacyFilterFromSearchParams(sp) {
   return { pharmacyId: pid, pharmacyName: name }
 }
 
+/**
+ * @param {URLSearchParams} sp
+ * @returns {{ depositId: string } | null}
+ */
+export function parseDepositFilterFromSearchParams(sp) {
+  if (!sp) {
+    return null
+  }
+  const did = (sp.get('deposit_id') || sp.get('depositId') || '').trim()
+  if (!did) {
+    return null
+  }
+  return { depositId: did }
+}
+
 /** État initial filtres (window) pour premier GET aligné sur l’URL. */
 export function getInitialInvoiceFiltersState() {
   const base = { ...EMPTY_INVOICE_FILTERS, overdueOnly: false }
   if (typeof window === 'undefined') {
     return base
   }
-  const extra = parsePharmacyFilterFromSearchParams(new URLSearchParams(window.location.search))
-  return extra ? { ...base, ...extra } : base
+  const sp = new URLSearchParams(window.location.search)
+  const extraP = parsePharmacyFilterFromSearchParams(sp)
+  const extraD = parseDepositFilterFromSearchParams(sp)
+  if (!extraP && !extraD) {
+    return base
+  }
+  return { ...base, ...(extraP || {}), ...(extraD || {}) }
 }
 
 export function invoiceFiltersFromPayload(raw) {
@@ -92,6 +113,9 @@ export function buildInvoiceListQueryParams({
   }
   if (d.pharmacyId) {
     params.pharmacy_id = d.pharmacyId
+  }
+  if (d.depositId) {
+    params.deposit_id = d.depositId
   }
   if (d.status) {
     params.status = d.status

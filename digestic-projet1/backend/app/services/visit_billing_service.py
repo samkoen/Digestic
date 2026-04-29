@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 import app.db.models as orm
 from app.core.payment_modes import is_depot_vente
 from app.db import mappers as mp
+from app.domain.billing.delivery_note_number import new_digestic_bl_number
 from app.models.delivery_note import DeliveryNote
 from app.models.visit_report import VisitReport
 from app.repositories.delivery_note_repository import DeliveryNoteRepository
@@ -47,6 +48,7 @@ class VisitBillingOrchestrator:
         uid = mp.parse_uuid(report.commercial_id)
 
         if has_shipment:
+            dday = mp.parse_date(report.visit_date)
             dn = DeliveryNote(
                 id=str(uuid.uuid4()),
                 visit_report_id=report.id,
@@ -56,7 +58,9 @@ class VisitBillingOrchestrator:
                 bottles_count=report.bottles_deposited,
                 free_units_quantity=report.free_units,
                 is_deposit_sale=is_depot_vente(report.payment_mode),
-                status="validated",
+                # Statut métier = en attente (envoi / suite) ; la validation visite est portée par validated_at.
+                status="pending",
+                bl_number=new_digestic_bl_number(for_date=dday),
                 email_sent=False,
             )
             saved_dn = self._delivery_repo.create(dn)
@@ -86,7 +90,7 @@ class VisitBillingOrchestrator:
                     user_id=uid,
                 )
 
-            deposit_orm.status = "validated"
+            deposit_orm.status = "pending"
             deposit_orm.validated_at = datetime.now(timezone.utc)
             self._db.flush()
 

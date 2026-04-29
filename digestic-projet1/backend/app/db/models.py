@@ -429,6 +429,7 @@ class Deposit(Base):
     status: Mapped[str] = mapped_column(String(32), default="draft", nullable=False)
     is_deposit_sale: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     reference_external: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    bl_number: Mapped[str | None] = mapped_column(String(48), nullable=True)
     email_sent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     email_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

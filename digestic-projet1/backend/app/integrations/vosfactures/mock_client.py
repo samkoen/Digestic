@@ -24,8 +24,10 @@ class VosFacturesMockClient:
         lines: list[dict[str, Any]],
         totals: dict[str, float],
         billing_type: str,
-        deposit_reference: str | None,
+        internal_deposit_id: str | None,
+        invoice_public_reference: str | None = None,
         currency: str = "EUR",
+        digestic_bl_number: str | None = None,
     ) -> VosFacturesInvoiceResult:
         _ = pharmacy, currency
         external_id = f"MOCK-VF-{uuid.uuid4().hex[:12].upper()}"
@@ -41,7 +43,9 @@ class VosFacturesMockClient:
                 "due": due_date.isoformat(),
             },
             "billing_type": billing_type,
-            "deposit_reference": deposit_reference,
+            "internal_deposit_id": internal_deposit_id,
+            "invoice_public_reference": (invoice_public_reference or "").strip() or None,
+            "digestic_bl_number": (digestic_bl_number or "").strip() or None,
             "lines": lines,
             "totals": totals,
             "legal_mentions_fr": [

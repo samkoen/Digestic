@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.dependencies import get_db
+from app.repositories.pharmacy_comment_repository import PharmacyCommentRepository
 from app.repositories.pharmacy_repository import PharmacyRepository
 from app.repositories.visit_report_repository import VisitReportRepository
 from app.repositories.visit_repository import VisitRepository
@@ -41,6 +42,7 @@ def get_visit_report_service(db: Session = Depends(get_db)) -> VisitReportServic
         VisitReportRepository(db),
         VisitRepository(db),
         PharmacyRepository(db),
+        PharmacyCommentRepository(db),
     )
 
 

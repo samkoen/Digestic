@@ -6,6 +6,7 @@ import { PHARM_TABLE_PX_STORAGE_V } from './pharmacyTableMinWidths'
 export const INVOICE_COLUMN_MIN_PX = {
   invoiceNumber: 100,
   pharmacyName: 120,
+  blNumber: 120,
   amount: 88,
   issueDate: 120,
   dueDate: 120,
