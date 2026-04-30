@@ -40,6 +40,12 @@ export const deliveryNoteService = {
     return response.data
   },
 
+  /** Dépôt-vente → statut « en attente » (pending). */
+  validateDepotVente: async (noteId) => {
+    const response = await api.post(`/delivery-notes/${noteId}/valider-depot-vente`)
+    return response.data
+  },
+
   /**
    * Télécharge le PDF du bon de livraison (généré côté serveur).
    */

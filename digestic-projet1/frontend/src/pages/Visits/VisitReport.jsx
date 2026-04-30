@@ -42,6 +42,8 @@ function VisitReport() {
     video_note_url: '',
     notes: '',
     payment_mode: DEFAULT_PAYMENT_MODE,
+    delivery_mode: 'normal',
+    bl_reduction: 0,
   })
   const [defaultPaymentMode, setDefaultPaymentMode] = useState(DEFAULT_PAYMENT_MODE)
 
@@ -78,6 +80,9 @@ function VisitReport() {
       const next = {
         ...prev,
         [name]: type === 'checkbox' ? checked : value,
+      }
+      if (name === 'has_deposit' && type === 'checkbox' && !checked) {
+        next.delivery_mode = 'normal'
       }
       if (name === 'has_deposit' && type === 'checkbox' && checked && !prev.payment_mode) {
         next.payment_mode = defaultPaymentMode
@@ -122,12 +127,18 @@ function VisitReport() {
     }
     try {
       const { weeks_until_return, ...rest } = formData
+      const br = parseFloat(String(formData.bl_reduction).replace(',', '.'))
       const reportData = {
         visit_id: visitId,
         pharmacy_id: visit.pharmacy_id,
         commercial_id: visit.commercial_id,
         visit_date: new Date().toISOString(),
         ...rest,
+        bl_reduction: Number.isFinite(br) ? Math.max(0, Math.min(100, br)) : 0,
+      }
+      if (!formData.has_deposit) {
+        delete reportData.payment_mode
+        delete reportData.delivery_mode
       }
       if (weeks_until_return) {
         reportData.weeks_until_return = parseInt(weeks_until_return, 10)
@@ -248,6 +259,19 @@ function VisitReport() {
                       InputLabelProps={{ shrink: true }}
                     />
                   </Grid>
+                  <Grid item xs={12} sm={4}>
+                    <TextField
+                      fullWidth
+                      label="Réduction sur ce BL (%)"
+                      type="number"
+                      name="bl_reduction"
+                      inputProps={{ min: 0, max: 100, step: '0.01' }}
+                      value={formData.bl_reduction}
+                      onChange={handleChange}
+                      InputLabelProps={{ shrink: true }}
+                      helperText="Après réduction pharmacie · Bon lié au rapport uniquement"
+                    />
+                  </Grid>
                   <Grid item xs={12} sm={6}>
                     <TextField
                       fullWidth
@@ -264,6 +288,22 @@ function VisitReport() {
                         </MenuItem>
                       ))}
                     </TextField>
+                  </Grid>
+                  <Grid item xs={12}>
+                    <FormControlLabel
+                      control={
+                        <Checkbox
+                          checked={formData.delivery_mode === 'deposit_sale'}
+                          onChange={(e) =>
+                            setFormData((prev) => ({
+                              ...prev,
+                              delivery_mode: e.target.checked ? 'deposit_sale' : 'normal',
+                            }))
+                          }
+                        />
+                      }
+                      label="Dépôt-vente"
+                    />
                   </Grid>
                 </>
               )}

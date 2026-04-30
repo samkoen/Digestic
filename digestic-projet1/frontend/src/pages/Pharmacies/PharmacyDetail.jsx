@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import {
   Box,
@@ -64,6 +64,12 @@ const COMMENT_EMOJI_SHORTCUTS = [
   { emoji: '💬', label: 'Message' },
 ]
 
+/** Détecte le pictogramme warning (⚠️ ou ⚠ seul) dans le texte du commentaire. */
+function commentTextHasWarning(text) {
+  if (!text) return false
+  return text.includes('\u26A0\uFE0F') || text.includes('\u26A0')
+}
+
 function PharmacyDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -104,8 +110,26 @@ function PharmacyDetail() {
     video_note_url: '',
     notes: '',
     payment_mode: getDefaultReportPaymentMode(),
+    delivery_mode: 'normal',
+    bl_reduction: 0,
   })
   const [reportFormData, setReportFormData] = useState(getDefaultReportFormData)
+
+  const sortedCommentsForHistory = useMemo(() => {
+    const warned = []
+    const other = []
+    for (const c of comments) {
+      if (commentTextHasWarning(c.text)) {
+        warned.push(c)
+      } else {
+        other.push(c)
+      }
+    }
+    const byCreatedDesc = (a, b) => new Date(b.created_at) - new Date(a.created_at)
+    warned.sort(byCreatedDesc)
+    other.sort(byCreatedDesc)
+    return [...warned, ...other]
+  }, [comments])
 
   useEffect(() => {
     fetchData()
@@ -205,17 +229,20 @@ function PharmacyDetail() {
       }
 
       const { weeks_until_return, ...rest } = reportFormData
+      const br = parseFloat(String(reportFormData.bl_reduction).replace(',', '.'))
       const reportData = {
         pharmacy_id: id,
         commercial_id: commercialId,
         visit_date: new Date().toISOString(),
         ...rest,
+        bl_reduction: Number.isFinite(br) ? Math.max(0, Math.min(100, br)) : 0,
       }
       if (weeks_until_return) {
         reportData.weeks_until_return = parseInt(weeks_until_return, 10)
       }
       if (!reportFormData.has_deposit) {
         delete reportData.payment_mode
+        delete reportData.delivery_mode
       }
       if (reportFormData.has_deposit && !reportData.payment_mode) {
         reportData.payment_mode = getDefaultReportPaymentMode()
@@ -244,6 +271,9 @@ function PharmacyDetail() {
       const next = {
         ...prev,
         [name]: type === 'checkbox' ? checked : value,
+      }
+      if (name === 'has_deposit' && type === 'checkbox' && !checked) {
+        next.delivery_mode = 'normal'
       }
       if (name === 'has_deposit' && type === 'checkbox' && checked && !next.payment_mode) {
         next.payment_mode = getDefaultReportPaymentMode()
@@ -353,18 +383,18 @@ function PharmacyDetail() {
       <Button
         startIcon={<ArrowBackIcon />}
         onClick={() => {
-          // Retourner à la page précédente si elle est spécifiée dans location.state
           const fromPage = location.state?.from || '/pharmacies'
+          const returnSearch =
+            typeof location.state?.returnSearch === 'string' ? location.state.returnSearch : ''
           if (fromPage === '/planning' && location.state?.tabValue !== undefined) {
-            // Passer le tabValue et la date sélectionnée pour revenir au bon onglet avec la bonne date
-            navigate(fromPage, { 
-              state: { 
+            navigate(fromPage, {
+              state: {
                 tabValue: location.state.tabValue,
-                selectedDate: location.state.selectedDate
-              } 
+                selectedDate: location.state.selectedDate,
+              },
             })
           } else {
-            navigate(fromPage)
+            navigate(`${fromPage}${returnSearch}`)
           }
         }}
         sx={{ mb: 2 }}
@@ -419,7 +449,7 @@ function PharmacyDetail() {
               <DescriptionIcon />
             </IconButton>
           </Tooltip>
-          <Tooltip title="Voir les factures">
+          <Tooltip title="Voir les factures et les bons en attente">
             <IconButton
               color="primary"
               onClick={() => setInvoiceListOpen(true)}
@@ -444,8 +474,15 @@ function PharmacyDetail() {
               <Typography><strong>Pharmacien:</strong> {pharmacy.pharmacist_name || '-'}</Typography>
               <Typography><strong>Email:</strong> {pharmacy.pharmacist_email || '-'}</Typography>
               <Typography><strong>Téléphone:</strong> {pharmacy.pharmacist_phone || '-'}</Typography>
-              <Typography><strong>RIB:</strong> {pharmacy.rib || '-'}</Typography>
               <Typography><strong>Mode de paiement dépôt:</strong> {pharmacy.payment_mode || '-'}</Typography>
+              <Typography>
+                <strong>Réduction BL / facture:</strong>{' '}
+                {pharmacy.reduction !== undefined &&
+                pharmacy.reduction !== null &&
+                Number(pharmacy.reduction) > 0
+                  ? `${Number(pharmacy.reduction)} % (sur montant HT)`
+                  : 'Aucune (0 %)'}
+              </Typography>
               <Typography>
                 <strong>Dépôt:</strong> {pharmacy.depot_name || '—'}
               </Typography>
@@ -582,7 +619,7 @@ function PharmacyDetail() {
                   py: 0,
                 }}
               >
-                {comments.length === 0 ? (
+                {sortedCommentsForHistory.length === 0 ? (
                   <ListItem>
                     <ListItemText
                       primary="Aucun commentaire"
@@ -590,7 +627,7 @@ function PharmacyDetail() {
                     />
                   </ListItem>
                 ) : (
-                  comments.map((c) => (
+                  sortedCommentsForHistory.map((c) => (
                     <ListItem
                       key={c.id}
                       alignItems="flex-start"
@@ -667,6 +704,7 @@ function PharmacyDetail() {
         onClose={() => setInvoiceListOpen(false)}
         pharmacyId={id}
         pharmacyEmail={pharmacy?.pharmacist_email}
+        pharmacyReduction={pharmacy?.reduction ?? 0}
         onSelectInvoice={(invoice) => {
           setSelectedInvoice(invoice)
           setInvoiceListOpen(false)
@@ -794,6 +832,18 @@ function PharmacyDetail() {
                     onChange={handleReportFormChange}
                   />
                 </Grid>
+                <Grid item xs={12} sm={4}>
+                  <ResizableTextField
+                    fullWidth
+                    label="Réduction sur ce BL uniquement (%)"
+                    type="number"
+                    name="bl_reduction"
+                    inputProps={{ min: 0, max: 100, step: '0.01' }}
+                    value={reportFormData.bl_reduction}
+                    onChange={handleReportFormChange}
+                    helperText="S&apos;ajoute après la réduction pharmacie. Uniquement pour le bon lié à ce rapport."
+                  />
+                </Grid>
                 <Grid item xs={12} sm={6}>
                   <ResizableTextField
                     fullWidth
@@ -809,6 +859,22 @@ function PharmacyDetail() {
                       </MenuItem>
                     ))}
                   </ResizableTextField>
+                </Grid>
+                <Grid item xs={12}>
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        checked={reportFormData.delivery_mode === 'deposit_sale'}
+                        onChange={(e) =>
+                          setReportFormData((prev) => ({
+                            ...prev,
+                            delivery_mode: e.target.checked ? 'deposit_sale' : 'normal',
+                          }))
+                        }
+                      />
+                    }
+                    label="Dépôt-vente"
+                  />
                 </Grid>
               </>
             )}

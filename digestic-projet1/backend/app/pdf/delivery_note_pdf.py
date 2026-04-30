@@ -7,6 +7,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
+from decimal import Decimal
 from urllib.parse import quote
 from xml.sax.saxutils import escape
 
@@ -28,6 +29,11 @@ from sqlalchemy.orm import Session
 
 import app.db.models as orm
 from app.db import mappers as mp
+from app.domain.billing.pharmacy_reduction import (
+    normalize_pharmacy_reduction_pct,
+    stacked_equivalent_single_discount_pct,
+    stacked_line_ht_after_reductions,
+)
 from app.repositories.product_repository import get_default_billing_product_row
 
 # Identité émetteur (aligné factures / BL papier Digestic)
@@ -131,7 +137,22 @@ def _paragraph_styles():
     return styles, title, subtitle, small, right, center_brand, footer
 
 
-def _build_lines_for_deposit(db: Session, dep: orm.Deposit) -> list[_PdfLine]:
+def _build_lines_for_deposit(
+    db: Session,
+    dep: orm.Deposit,
+    pharmacy_reduction_pct: float = 0.0,
+    visit_bl_reduction_pct: float = 0.0,
+) -> list[_PdfLine]:
+    r_ph = normalize_pharmacy_reduction_pct(pharmacy_reduction_pct)
+    r_vr = normalize_pharmacy_reduction_pct(visit_bl_reduction_pct)
+
+    def _paying_amounts(gross: float, qty_u: float, unit_u: float) -> tuple[float, float]:
+        if qty_u > 0 and unit_u > 0 and (r_ph or r_vr):
+            line_ht = round(stacked_line_ht_after_reductions(gross, r_ph, r_vr), 2)
+            d_pct = stacked_equivalent_single_discount_pct(r_ph, r_vr)
+            return line_ht, d_pct
+        return round(gross, 2), 0.0
+
     rows = db.execute(
         select(orm.DepositLine, orm.Product)
         .join(orm.Product, orm.DepositLine.product_id == orm.Product.id)
@@ -144,7 +165,8 @@ def _build_lines_for_deposit(db: Session, dep: orm.Deposit) -> list[_PdfLine]:
         qty = int(dl.quantity)
         unit = float(pr.wholesale_unit_price)
         vat = float(pr.vat_rate)
-        lht = round(qty * unit, 2)
+        gross = qty * unit
+        line_ht, d_pct = _paying_amounts(gross, float(qty), unit)
         code = (pr.code or "").strip() or "—"
         out.append(
             _PdfLine(
@@ -152,8 +174,8 @@ def _build_lines_for_deposit(db: Session, dep: orm.Deposit) -> list[_PdfLine]:
                 label=pr.name or "—",
                 qty=float(qty),
                 unit_ht=unit,
-                discount_pct=0.0,
-                line_ht=lht,
+                discount_pct=d_pct,
+                line_ht=line_ht,
                 vat_rate=vat,
             )
         )
@@ -186,7 +208,8 @@ def _build_lines_for_deposit(db: Session, dep: orm.Deposit) -> list[_PdfLine]:
             qty = int(dep.bottles_count)
             unit = float(pr.wholesale_unit_price)
             vat = float(pr.vat_rate)
-            lht = round(qty * unit, 2)
+            gross = qty * unit
+            line_ht, d_pct = _paying_amounts(gross, float(qty), unit)
             code = (pr.code or "").strip() or "—"
             out.append(
                 _PdfLine(
@@ -194,8 +217,8 @@ def _build_lines_for_deposit(db: Session, dep: orm.Deposit) -> list[_PdfLine]:
                     label=pr.name or "—",
                     qty=float(qty),
                     unit_ht=unit,
-                    discount_pct=0.0,
-                    line_ht=lht,
+                    discount_pct=d_pct,
+                    line_ht=line_ht,
                     vat_rate=vat,
                 )
             )
@@ -217,7 +240,18 @@ def build_delivery_note_pdf(db: Session, note_id: str) -> tuple[bytes, str] | No
     if not ph:
         return None
 
-    lines = _build_lines_for_deposit(db, dep)
+    vr_pct = 0.0
+    if getattr(dep, "visit_report_id", None):
+        vr_row = db.get(orm.VisitReport, dep.visit_report_id)
+        if vr_row is not None:
+            vr_pct = float(getattr(vr_row, "bl_reduction_percent", 0) or 0)
+
+    lines = _build_lines_for_deposit(
+        db,
+        dep,
+        float(getattr(ph, "reduction_percent", 0) or 0),
+        vr_pct,
+    )
 
     dd: date = dep.delivery_date
     date_str = dd.strftime("%d/%m/%y")

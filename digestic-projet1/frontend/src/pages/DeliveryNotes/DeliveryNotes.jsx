@@ -7,7 +7,6 @@ import {
   Table,
   TableBody,
   TableCell,
-  TableContainer,
   TableHead,
   TableRow,
   Paper,
@@ -20,6 +19,7 @@ import {
   DialogTitle,
   IconButton,
   TextField,
+  Checkbox,
 } from '@mui/material'
 import ViewColumnIcon from '@mui/icons-material/ViewColumn'
 import CloseIcon from '@mui/icons-material/Close'
@@ -52,7 +52,9 @@ import {
   saveDeliveryNoteColumnWidths,
   DELIVERY_NOTE_COLUMN_MIN_PX,
   DELIVERY_NOTE_TABLE_ACTIONS_PX,
+  DELIVERY_NOTE_SELECT_COL_PX,
 } from '../../utils/deliveryNoteTableLayoutUtils'
+import { LIST_TABLE_SCROLL_MAX_HEIGHT } from '../../constants/listTableLayout'
 
 const headerCellTextSx = { fontSize: '0.75rem', fontWeight: 600 }
 
@@ -67,19 +69,39 @@ const DEFAULT_VISIBLE_COLUMNS = [
 ]
 
 /** Aligné sur `delivery_note_service.issue_invoice_from_delivery_note`. */
-function indicativeInvoiceTotals(bottles, product) {
+function indicativeInvoiceTotals(bottles, product, pharmacyReductionPct = 0) {
   const n = Math.max(0, Number(bottles) || 0)
   if (!product || n <= 0) {
     return { ht: 0, vat: 0, ttc: 0, vatRatePercent: 0 }
   }
+  const rp = Math.max(0, Math.min(100, Number(pharmacyReductionPct) || 0))
+  const factor = 1 - rp / 100
   const unitHt = Number(product.wholesale_unit_price) || 0
   const vatRate = Number(product.vat_rate) || 0
-  const lht = Math.round(n * unitHt * 10000) / 10000
+  const lht = Math.round(n * unitHt * factor * 10000) / 10000
   const lvat = Math.round(lht * (vatRate / 100) * 10000) / 10000
   const totalHt = Math.round(lht * 100) / 100
   const totalVat = Math.round(lvat * 100) / 100
   const ttc = Math.round((totalHt + totalVat) * 100) / 100
   return { ht: totalHt, vat: totalVat, ttc, vatRatePercent: vatRate }
+}
+
+/** Libellé court si ce BL ne doit pas passer à la facturation (null = OK). */
+function deliveryNoteInvoiceBlockReason(row) {
+  if ((row.bottles_count || 0) < 1) {
+    return 'aucune bouteille à facturer'
+  }
+  if (row.status === 'fully_invoiced') {
+    return 'déjà facturé'
+  }
+  if (row.status === 'depot-vente') {
+    return 'dépôt-vente (valider le bon avant facturation)'
+  }
+  return null
+}
+
+function isDeliveryNoteInvoiceable(row) {
+  return deliveryNoteInvoiceBlockReason(row) === null
 }
 
 function DeliveryNotes() {
@@ -111,6 +133,10 @@ function DeliveryNotes() {
   const [invoiceForm, setInvoiceForm] = useState({ bottles: 0 })
   const [billingProduct, setBillingProduct] = useState(null)
   const [pdfLoadingId, setPdfLoadingId] = useState(null)
+  const [validatingDepotVenteId, setValidatingDepotVenteId] = useState(null)
+  const [selectedBlIds, setSelectedBlIds] = useState(() => new Set())
+  const [bulkInvoicing, setBulkInvoicing] = useState(false)
+  const noteByIdRef = useRef(new Map())
 
   const resizableOrder = useMemo(() => {
     if (tableView?.visibleColumnKeys?.length) {
@@ -155,9 +181,10 @@ function DeliveryNotes() {
     const w = tableWidth > 0 ? tableWidth : tableWidthRef.current
     const W = Math.max(200, w)
     const A = DELIVERY_NOTE_TABLE_ACTIONS_PX
+    const Sel = DELIVERY_NOTE_SELECT_COL_PX
     if (colWidthsPx) {
       const sum = resizableOrder.reduce((a, k) => a + (colWidthsPx[k] || 0), 0)
-      const tmin = sum + A
+      const tmin = sum + A + Sel
       return {
         fullWidths: { ...colWidthsPx, actions: A },
         tableMinW: Math.max(W, tmin),
@@ -167,7 +194,7 @@ function DeliveryNotes() {
     const o = computeResizablePixelWidths(frac, w, DELIVERY_NOTE_COLUMN_MIN_PX, resizableOrder, A)
     return {
       fullWidths: { ...o.colWidths, actions: o.actions },
-      tableMinW: o.tableMinWidth,
+      tableMinW: o.tableMinWidth + Sel,
     }
   }, [tableWidth, colWidthsPx, resizableOrder])
 
@@ -338,7 +365,7 @@ function DeliveryNotes() {
       ])
       const pmap = {}
       for (const p of pharmacies || []) {
-        pmap[p.id] = { name: p.name, photo_url: p.photo_url }
+        pmap[p.id] = { name: p.name, photo_url: p.photo_url, reduction: p.reduction ?? 0 }
       }
       setPharmacyMap(pmap)
       setCommercials(comms || [])
@@ -388,6 +415,12 @@ function DeliveryNotes() {
   }, [page, rowsPerPage, orderBy, order, debouncedFilters])
 
   useEffect(() => {
+    for (const r of rows) {
+      noteByIdRef.current.set(r.id, r)
+    }
+  }, [rows])
+
+  useEffect(() => {
     void loadData()
   }, [loadData])
 
@@ -412,10 +445,13 @@ function DeliveryNotes() {
     [pharmacyMap],
   )
 
-  const invoiceIndicative = useMemo(
-    () => indicativeInvoiceTotals(invoiceForm.bottles, billingProduct),
-    [invoiceForm.bottles, billingProduct],
-  )
+  const invoiceIndicative = useMemo(() => {
+    const r =
+      invoiceTarget?.pharmacy_id != null
+        ? pharmacyMap[invoiceTarget.pharmacy_id]?.reduction
+        : 0
+    return indicativeInvoiceTotals(invoiceForm.bottles, billingProduct, r)
+  }, [invoiceForm.bottles, billingProduct, invoiceTarget?.pharmacy_id, pharmacyMap])
 
   const handleDownloadPdf = useCallback(async (row) => {
     try {
@@ -430,20 +466,154 @@ function DeliveryNotes() {
     }
   }, [])
 
+  const navigateToPharmacy = useCallback(
+    (pharmacyId) => {
+      const qs = searchParams.toString()
+      navigate(`/pharmacies/${pharmacyId}`, {
+        state: {
+          from: '/delivery-notes',
+          ...(qs ? { returnSearch: `?${qs}` } : {}),
+        },
+      })
+    },
+    [navigate, searchParams],
+  )
+
+  const handleValiderDepotVente = useCallback(
+    async (row) => {
+      try {
+        setValidatingDepotVenteId(row.id)
+        await deliveryNoteService.validateDepotVente(row.id)
+        void loadData()
+      } catch (e) {
+        console.error(e)
+        const msg = e?.response?.data?.error || e.message || 'Impossible de valider le bon'
+        // eslint-disable-next-line no-alert
+        alert(msg)
+      } finally {
+        setValidatingDepotVenteId(null)
+      }
+    },
+    [loadData],
+  )
+
+  const invoiceableRowsOnPage = useMemo(
+    () => rows.filter(isDeliveryNoteInvoiceable),
+    [rows],
+  )
+
+  const headerBulkCheckboxProps = useMemo(() => {
+    const ids = invoiceableRowsOnPage.map((r) => r.id)
+    if (ids.length === 0) {
+      return { checked: false, indeterminate: false }
+    }
+    const sel = ids.filter((id) => selectedBlIds.has(id)).length
+    return {
+      checked: sel === ids.length,
+      indeterminate: sel > 0 && sel < ids.length,
+    }
+  }, [invoiceableRowsOnPage, selectedBlIds])
+
+  const toggleSelectRow = useCallback((id, row) => {
+    if (!isDeliveryNoteInvoiceable(row)) return
+    setSelectedBlIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+
+  const toggleSelectAllOnPage = useCallback(() => {
+    const ids = rows.filter(isDeliveryNoteInvoiceable).map((r) => r.id)
+    if (ids.length === 0) return
+    setSelectedBlIds((prev) => {
+      const allOn = ids.every((id) => prev.has(id))
+      const next = new Set(prev)
+      if (allOn) {
+        for (const id of ids) next.delete(id)
+      } else {
+        for (const id of ids) next.add(id)
+      }
+      return next
+    })
+  }, [rows])
+
+  const handleBulkInvoice = useCallback(async () => {
+    if (selectedBlIds.size === 0) return
+    const ids = [...selectedBlIds]
+    const list = ids.map((id) => noteByIdRef.current.get(id)).filter(Boolean)
+    const blLabel = (r) => (r.bl_number && String(r.bl_number).trim()) || r.id
+    if (list.length !== ids.length) {
+      // eslint-disable-next-line no-alert
+      alert(
+        'Impossible de facturer : certains bons sélectionnés ne sont pas disponibles dans la grille courante. Actualisez la liste ou passez les pages pour charger chaque bon, puis réessayez.',
+      )
+      return
+    }
+    const blocking = []
+    for (const r of list) {
+      const why = deliveryNoteInvoiceBlockReason(r)
+      if (why) blocking.push(`${blLabel(r)} — ${why}`)
+    }
+    if (blocking.length) {
+      // eslint-disable-next-line no-alert
+      alert(`Facturation annulée.\nAu moins un bon n’est pas facturable :\n\n${blocking.join('\n')}`)
+      return
+    }
+    if (!billingProduct) {
+      // eslint-disable-next-line no-alert
+      alert('Aucun produit de facturation actif en base.')
+      return
+    }
+    setBulkInvoicing(true)
+    try {
+      for (const r of list) {
+        const ttc = indicativeInvoiceTotals(
+          r.bottles_count,
+          billingProduct,
+          pharmacyMap[r.pharmacy_id]?.reduction,
+        ).ttc
+        await deliveryNoteService.issueInvoice(r.id, {
+          bottles_to_invoice: r.bottles_count,
+          amount: ttc,
+        })
+      }
+      setSelectedBlIds(new Set())
+      void loadData()
+      void loadMetaMaps()
+    } catch (error) {
+      console.error(error)
+      const data = error.response?.data
+      const msg = [data?.error, data?.detail].filter(Boolean).join('\n') || error.message
+      // eslint-disable-next-line no-alert
+      alert(
+        msg ||
+          'Erreur pendant la facturation groupée ; des factures ont pu être créées avant l’erreur.',
+      )
+      void loadData()
+      void loadMetaMaps()
+    } finally {
+      setBulkInvoicing(false)
+    }
+  }, [billingProduct, loadData, loadMetaMaps, pharmacyMap, selectedBlIds])
+
   const bodyCtx = useMemo(
     () => ({
       formatDate,
-      navigate,
+      navigateToPharmacy,
       getPhotoUrl,
       onFacturer: (note) => {
         setInvoiceTarget(note)
         setInvoiceForm({ bottles: note.bottles_count })
         setInvoiceDialogOpen(true)
       },
+      onValiderDepotVente: handleValiderDepotVente,
       handleDownloadPdf,
       pdfLoadingId,
+      validatingDepotVenteId,
     }),
-    [navigate, getPhotoUrl, handleDownloadPdf, pdfLoadingId],
+    [navigateToPharmacy, getPhotoUrl, handleDownloadPdf, pdfLoadingId, handleValiderDepotVente, validatingDepotVenteId],
   )
 
   const handleSort = (property) => {
@@ -529,12 +699,28 @@ function DeliveryNotes() {
   const hasFilterBar = hasDirtyDeliveryNoteFilters(filters)
   const nDataCols = resizableOrder.length
   const zBase = 20
+  const selectColSx = {
+    width: DELIVERY_NOTE_SELECT_COL_PX,
+    minWidth: DELIVERY_NOTE_SELECT_COL_PX,
+    maxWidth: DELIVERY_NOTE_SELECT_COL_PX,
+    boxSizing: 'border-box',
+  }
 
   return (
     <Box>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={1} flexWrap="wrap" gap={2}>
         <Typography variant="h4">Bons de livraison</Typography>
         <Box display="flex" gap={2} flexWrap="wrap" justifyContent="flex-end" alignItems="center">
+          {selectedBlIds.size > 0 && (
+            <Button
+              variant="contained"
+              color="secondary"
+              disabled={bulkInvoicing}
+              onClick={() => void handleBulkInvoice()}
+            >
+              Facturer la sélection ({selectedBlIds.size})
+            </Button>
+          )}
           {hasFilterBar && (
             <Button variant="outlined" onClick={clearFilters} size="small">
               Réinitialiser filtres
@@ -576,19 +762,27 @@ function DeliveryNotes() {
       )}
 
       <Box ref={setTableContainerRef} sx={{ width: '100%', minWidth: 0 }}>
-        <TableContainer
-          component={Paper}
-          sx={{ position: 'relative', overflowX: 'auto', width: '100%' }}
+        <Paper
+          elevation={2}
+          sx={{
+            display: 'flex',
+            flexDirection: 'column',
+            width: '100%',
+            maxHeight: LIST_TABLE_SCROLL_MAX_HEIGHT,
+            overflow: 'hidden',
+          }}
         >
-          {listLoading && <LinearProgress sx={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 1 }} />}
-          <Table
-            size="small"
-            sx={{
-              tableLayout: 'fixed',
-              width: '100%',
-              minWidth: tableMinW,
-            }}
-          >
+          <Box sx={{ position: 'relative', flex: '1 1 auto', minHeight: 0, overflow: 'auto' }}>
+            {listLoading && <LinearProgress sx={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 2 }} />}
+            <Table
+              stickyHeader
+              size="small"
+              sx={{
+                tableLayout: 'fixed',
+                width: '100%',
+                minWidth: tableMinW,
+              }}
+            >
             <TableHead
               sx={{
                 overflow: 'visible',
@@ -596,6 +790,24 @@ function DeliveryNotes() {
               }}
             >
               <TableRow sx={{ position: 'relative' }}>
+                <TableCell
+                  padding="checkbox"
+                  sx={{
+                    ...selectColSx,
+                    ...headerCellTextSx,
+                    verticalAlign: 'bottom',
+                    borderBottom: (t) => `1px solid ${t.palette.divider}`,
+                  }}
+                >
+                  <Checkbox
+                    size="small"
+                    disabled={invoiceableRowsOnPage.length === 0}
+                    checked={headerBulkCheckboxProps.checked}
+                    indeterminate={headerBulkCheckboxProps.indeterminate}
+                    onChange={toggleSelectAllOnPage}
+                    inputProps={{ 'aria-label': 'Sélectionner tous les BL facturables de la page' }}
+                  />
+                </TableCell>
                 {resizableOrder.map((colKey, idx) => {
                   const last = idx === nDataCols - 1
                   const d = tableView?.definition?.find((c) => c.key === colKey)
@@ -636,6 +848,15 @@ function DeliveryNotes() {
                 </ResizableHeaderCell>
               </TableRow>
               <TableRow>
+                <TableCell
+                  padding="checkbox"
+                  sx={{
+                    ...selectColSx,
+                    verticalAlign: 'top',
+                    py: 0.75,
+                    borderBottom: (t) => `1px solid ${t.palette.divider}`,
+                  }}
+                />
                 {resizableOrder.map((colKey) => (
                   <DeliveryNoteFilterCell
                     key={`f-${colKey}`}
@@ -666,7 +887,7 @@ function DeliveryNotes() {
             <TableBody>
               {rows.length === 0 && !listLoading && (
                 <TableRow>
-                  <TableCell colSpan={nDataCols + 1} align="center">
+                  <TableCell colSpan={nDataCols + 2} align="center">
                     <Typography color="textSecondary" py={2}>
                       {debouncedFilters.depositId
                         ? 'Aucun bon pour ces critères (identifiant inconnu ou déjà clôturé si « inclure clôturés » est décoché).'
@@ -676,7 +897,18 @@ function DeliveryNotes() {
                 </TableRow>
               )}
               {rows.map((row) => (
-                <TableRow key={row.id} hover>
+                <TableRow key={row.id} hover selected={selectedBlIds.has(row.id)}>
+                  <TableCell padding="checkbox" sx={selectColSx}>
+                    <Checkbox
+                      size="small"
+                      checked={selectedBlIds.has(row.id)}
+                      disabled={!isDeliveryNoteInvoiceable(row)}
+                      onChange={() => toggleSelectRow(row.id, row)}
+                      inputProps={{
+                        'aria-label': `Sélectionner le bon ${row.bl_number || row.id}`,
+                      }}
+                    />
+                  </TableCell>
                   {resizableOrder.map((colKey) => (
                     <DeliveryNoteTableBodyCell
                       key={`${row.id}-${colKey}`}
@@ -691,7 +923,9 @@ function DeliveryNotes() {
               ))}
             </TableBody>
           </Table>
+          </Box>
           <TablePagination
+            sx={{ flexShrink: 0, borderTop: 1, borderColor: 'divider' }}
             component="div"
             count={total}
             page={page}
@@ -704,7 +938,7 @@ function DeliveryNotes() {
             rowsPerPageOptions={[10, 25, 50, 100]}
             labelRowsPerPage="Lignes par page"
           />
-        </TableContainer>
+        </Paper>
       </Box>
 
       <Dialog open={invoiceDialogOpen} onClose={closeInvoiceDialog} maxWidth="xs" fullWidth>

@@ -168,6 +168,54 @@ class InvoiceRepository:
     def find_by_pharmacy(self, pharmacy_id: str) -> list[Invoice]:
         return self.find_by(pharmacy_id=pharmacy_id)
 
+    def pharmacy_invoice_detail_dicts(self, pharmacy_id: str) -> list[dict[str, Any]]:
+        """Factures d'une pharmacie avec totaux ligne (bouteilles payantes, remise) et n° BL lié."""
+        try:
+            pid = mp.parse_uuid(pharmacy_id)
+        except ValueError:
+            return []
+
+        ordered = (
+            self._db.execute(
+                select(orm.Invoice, orm.Deposit.bl_number)
+                .outerjoin(orm.Deposit, orm.Invoice.deposit_id == orm.Deposit.id)
+                .where(orm.Invoice.pharmacy_id == pid)
+                .order_by(orm.Invoice.issue_date.desc())
+            )
+            .all()
+        )
+        if not ordered:
+            return []
+
+        iuuids = [inv.id for inv, _ in ordered]
+        line_rows = (
+            self._db.execute(select(orm.InvoiceLine).where(orm.InvoiceLine.invoice_id.in_(iuuids)))
+            .scalars()
+            .all()
+        )
+        agg: dict[Any, dict[str, Any]] = {}
+        for li in line_rows:
+            iid = li.invoice_id
+            if iid not in agg:
+                agg[iid] = {"paying_bottles": 0, "discount": 0.0}
+            if not li.is_free_unit:
+                agg[iid]["paying_bottles"] += int(li.quantity)
+                d = float(li.discount_percent or 0)
+                if int(li.quantity) > 0 and d > agg[iid]["discount"]:
+                    agg[iid]["discount"] = d
+
+        out: list[dict[str, Any]] = []
+        for inv_row, bln in ordered:
+            inv = mp.invoice_orm_to_domain(inv_row)
+            a = agg.get(inv_row.id, {"paying_bottles": 0, "discount": 0.0})
+            d = inv.to_dict()
+            d["paying_bottles"] = int(a["paying_bottles"])
+            disc = float(a["discount"] or 0)
+            d["line_discount_percent"] = round(disc, 2) if disc > 0 else None
+            d["deposit_bl_number"] = (str(bln).strip() if bln else None)
+            out.append(d)
+        return out
+
     def find_overdue(self, days: int = 30) -> list[Invoice]:
         return [
             inv

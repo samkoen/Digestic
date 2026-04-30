@@ -54,6 +54,14 @@ class VosFacturesApiClient:
         return f"https://{self._sub}.vosfactures.fr/invoices.json"
 
     @staticmethod
+    def _fmt_discount_percent_for_vf(pct: float) -> str:
+        """Chaîne attendue par VosFactures pour discount_percent (%)."""
+        p = float(pct)
+        if abs(p - round(p)) < 1e-9:
+            return str(int(round(p)))
+        return f"{p:.4f}".rstrip("0").rstrip(".")
+
+    @staticmethod
     def _build_positions(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
         positions: list[dict[str, Any]] = []
         for li in lines:
@@ -63,17 +71,42 @@ class VosFacturesApiClient:
                 continue
             tax = float(li.get("vat_rate_percent", 0))
             label = str(li.get("label", "Produit"))
+            code = (li.get("product_code") or "").strip()
+            code_field = {"code": code} if code else {}
+
             if nature == "paying":
                 line_ht = float(li.get("line_ht", 0))
-                ttc = round(line_ht * (1 + tax / 100.0), 2)
-                positions.append(
-                    {
-                        "name": label,
-                        "quantity": qty,
-                        "tax": tax,
-                        "total_price_gross": ttc,
-                    }
-                )
+                unit_ht_catalog = float(li.get("unit_price_ht") or 0)
+                d_pct = float(li.get("discount_percent") or 0)
+                use_breakdown = d_pct > 0 and unit_ht_catalog > 0
+                if use_breakdown:
+                    # Doc VosFactures : prix avant réduction obligatoires ; total_price_gross requis même avec price_net.
+                    gross_ht = round(qty * unit_ht_catalog, 4)
+                    gross_ttc = round(gross_ht * (1 + tax / 100.0), 2)
+                    positions.append(
+                        {
+                            "name": label,
+                            **code_field,
+                            "quantity": qty,
+                            "tax": tax,
+                            "price_net": unit_ht_catalog,
+                            "total_price_gross": gross_ttc,
+                            "discount_percent": VosFacturesApiClient._fmt_discount_percent_for_vf(
+                                d_pct
+                            ),
+                        }
+                    )
+                else:
+                    ttc = round(line_ht * (1 + tax / 100.0), 2)
+                    positions.append(
+                        {
+                            "name": label,
+                            **code_field,
+                            "quantity": qty,
+                            "tax": tax,
+                            "total_price_gross": ttc,
+                        }
+                    )
             else:
                 ref_ht = float(li.get("reference_value_ht") or li.get("unit_price_ht") or 0)
                 desc = (
@@ -84,6 +117,7 @@ class VosFacturesApiClient:
                 positions.append(
                     {
                         "name": label,
+                        **code_field,
                         "description": desc,
                         "quantity": qty,
                         "tax": tax,
@@ -137,6 +171,13 @@ class VosFacturesApiClient:
         if not positions:
             raise ValueError("VosFactures : aucune ligne de facture à envoyer")
 
+        invoice_level_discount = any(
+            str(li.get("nature") or "paying") == "paying"
+            and float(li.get("discount_percent") or 0) > 0
+            and float(li.get("unit_price_ht") or 0) > 0
+            for li in lines
+        )
+
         inv: dict[str, Any] = {
             "kind": "vat",
             "lang": "fr",
@@ -150,6 +191,10 @@ class VosFacturesApiClient:
             "oid": draft_invoice_number,
             "oid_unique": "yes",
         }
+        # Doc VosFactures : remise × ligne (discount_percent) + prix avant remise → affichage comme le BL (HT).
+        if invoice_level_discount:
+            inv["show_discount"] = True
+            inv["discount_kind"] = "percent_unit"
         dept = vosfactures_department_id()
         if dept is not None:
             inv["department_id"] = dept

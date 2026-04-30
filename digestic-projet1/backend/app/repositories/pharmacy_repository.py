@@ -15,6 +15,7 @@ from app.models.pharmacy import Pharmacy
 from app.pagination import offset_for_page, PageResult, normalize_page_input
 from app.repositories.pharmacy_list_filters_extra import apply_extra_pharmacy_filters
 from app.repositories.pharmacy_list_ordering import order_pharmacy_list
+from app.domain.billing.pharmacy_reduction import normalize_pharmacy_reduction_pct
 
 
 @dataclass(frozen=True)
@@ -290,6 +291,11 @@ class PharmacyRepository:
         d["pharmacy_status"] = raw
         d.pop("status", None)
         d.pop("active", None)
+        r_raw = d.get("reduction")
+        if r_raw is None:
+            r_raw = d.get("reduction_percent")
+        d["reduction_percent"] = normalize_pharmacy_reduction_pct(r_raw)
+        d.pop("reduction", None)
         return d
 
     def create(self, model: Pharmacy) -> Pharmacy:
@@ -355,6 +361,7 @@ class PharmacyRepository:
         row.rib = d.get("rib")
         row.payment_mode = mp.normalize_payment_mode_to_db(d.get("payment_mode"))
         row.pharmacy_status = d["pharmacy_status"]
+        row.reduction_percent = float(d.get("reduction_percent", 0) or 0)
         row.next_visit_date = (
             mp.parse_date(d["next_visit_date"])
             if d.get("next_visit_date") not in (None, "")

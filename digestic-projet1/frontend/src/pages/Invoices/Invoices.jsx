@@ -7,7 +7,6 @@ import {
   Table,
   TableBody,
   TableCell,
-  TableContainer,
   TableHead,
   TableRow,
   Paper,
@@ -16,6 +15,7 @@ import {
   TableSortLabel,
   Tabs,
   Tab,
+  Checkbox,
 } from '@mui/material'
 import ViewColumnIcon from '@mui/icons-material/ViewColumn'
 import { format } from 'date-fns'
@@ -40,8 +40,10 @@ import {
   loadInvoiceColumnWidths,
   saveInvoiceColumnWidths,
   INVOICE_COLUMN_MIN_PX,
+  INVOICE_SELECT_COL_PX,
   INVOICE_TABLE_ACTIONS_PX,
 } from '../../utils/invoiceTableLayoutUtils'
+import { LIST_TABLE_SCROLL_MAX_HEIGHT } from '../../constants/listTableLayout'
 
 const headerCellTextSx = { fontSize: '0.75rem', fontWeight: 600 }
 
@@ -88,6 +90,7 @@ function Invoices() {
   const [savingColumns, setSavingColumns] = useState(false)
   const [activeSavedFilterId, setActiveSavedFilterId] = useState(null)
   const [pdfLoadingId, setPdfLoadingId] = useState(null)
+  const [selectedInvoiceIds, setSelectedInvoiceIds] = useState(() => new Set())
   const tableWidthRef = useRef(1200)
   const colResizeObserverRef = useRef(null)
   const navigate = useNavigate()
@@ -136,9 +139,10 @@ function Invoices() {
     const w = tableWidth > 0 ? tableWidth : tableWidthRef.current
     const W = Math.max(200, w)
     const A = INVOICE_TABLE_ACTIONS_PX
+    const Sel = INVOICE_SELECT_COL_PX
     if (colWidthsPx) {
       const sum = resizableOrder.reduce((a, k) => a + (colWidthsPx[k] || 0), 0)
-      const tmin = sum + A
+      const tmin = sum + A + Sel
       return {
         fullWidths: { ...colWidthsPx, actions: A },
         tableMinW: Math.max(W, tmin),
@@ -148,7 +152,7 @@ function Invoices() {
     const o = computeResizablePixelWidths(frac, w, INVOICE_COLUMN_MIN_PX, resizableOrder, A)
     return {
       fullWidths: { ...o.colWidths, actions: o.actions },
-      tableMinW: o.tableMinWidth,
+      tableMinW: o.tableMinWidth + Sel,
     }
   }, [tableWidth, colWidthsPx, resizableOrder])
 
@@ -277,15 +281,28 @@ function Invoices() {
     }
   }
 
+  const navigateToPharmacy = useCallback(
+    (pharmacyId) => {
+      const qs = searchParams.toString()
+      navigate(`/pharmacies/${pharmacyId}`, {
+        state: {
+          from: '/invoices',
+          ...(qs ? { returnSearch: `?${qs}` } : {}),
+        },
+      })
+    },
+    [navigate, searchParams],
+  )
+
   const bodyCtx = useMemo(
     () => ({
       formatDate,
       canDownloadVosFacturesPdf,
       handleDownloadPdf,
       pdfLoadingId,
-      navigate,
+      navigateToPharmacy,
     }),
-    [navigate, pdfLoadingId],
+    [navigateToPharmacy, pdfLoadingId],
   )
 
   useEffect(() => {
@@ -447,9 +464,51 @@ function Invoices() {
     }
   }
 
+  const headerBulkCheckboxProps = useMemo(() => {
+    const ids = rows.map((r) => r.id)
+    if (ids.length === 0) {
+      return { checked: false, indeterminate: false }
+    }
+    const sel = ids.filter((id) => selectedInvoiceIds.has(id)).length
+    return {
+      checked: sel === ids.length,
+      indeterminate: sel > 0 && sel < ids.length,
+    }
+  }, [rows, selectedInvoiceIds])
+
+  const toggleSelectRow = useCallback((id) => {
+    setSelectedInvoiceIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+
+  const toggleSelectAllOnPage = useCallback(() => {
+    const ids = rows.map((r) => r.id)
+    if (ids.length === 0) return
+    setSelectedInvoiceIds((prev) => {
+      const allOn = ids.every((id) => prev.has(id))
+      const next = new Set(prev)
+      if (allOn) {
+        for (const id of ids) next.delete(id)
+      } else {
+        for (const id of ids) next.add(id)
+      }
+      return next
+    })
+  }, [rows])
+
   const hasFilterBar = hasDirtyFilters(tab, filters)
   const nDataCols = resizableOrder.length
   const zBase = 20
+  const selectColSx = {
+    width: INVOICE_SELECT_COL_PX,
+    minWidth: INVOICE_SELECT_COL_PX,
+    maxWidth: INVOICE_SELECT_COL_PX,
+    boxSizing: 'border-box',
+  }
 
   return (
     <Box>
@@ -502,19 +561,27 @@ function Invoices() {
       )}
 
       <Box ref={setTableContainerRef} sx={{ width: '100%', minWidth: 0 }}>
-        <TableContainer
-          component={Paper}
-          sx={{ position: 'relative', overflowX: 'auto', width: '100%' }}
+        <Paper
+          elevation={2}
+          sx={{
+            display: 'flex',
+            flexDirection: 'column',
+            width: '100%',
+            maxHeight: LIST_TABLE_SCROLL_MAX_HEIGHT,
+            overflow: 'hidden',
+          }}
         >
-          {listLoading && <LinearProgress sx={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 1 }} />}
-          <Table
-            size="small"
-            sx={{
-              tableLayout: 'fixed',
-              width: '100%',
-              minWidth: tableMinW,
-            }}
-          >
+          <Box sx={{ position: 'relative', flex: '1 1 auto', minHeight: 0, overflow: 'auto' }}>
+            {listLoading && <LinearProgress sx={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 2 }} />}
+            <Table
+              stickyHeader
+              size="small"
+              sx={{
+                tableLayout: 'fixed',
+                width: '100%',
+                minWidth: tableMinW,
+              }}
+            >
             <TableHead
               sx={{
                 overflow: 'visible',
@@ -522,6 +589,24 @@ function Invoices() {
               }}
             >
               <TableRow sx={{ position: 'relative' }}>
+                <TableCell
+                  padding="checkbox"
+                  sx={{
+                    ...selectColSx,
+                    ...headerCellTextSx,
+                    verticalAlign: 'bottom',
+                    borderBottom: (t) => `1px solid ${t.palette.divider}`,
+                  }}
+                >
+                  <Checkbox
+                    size="small"
+                    disabled={rows.length === 0}
+                    checked={headerBulkCheckboxProps.checked}
+                    indeterminate={headerBulkCheckboxProps.indeterminate}
+                    onChange={toggleSelectAllOnPage}
+                    inputProps={{ 'aria-label': 'Sélectionner toutes les factures de la page' }}
+                  />
+                </TableCell>
                 {resizableOrder.map((colKey, idx) => {
                   const last = idx === nDataCols - 1
                   const d = tableView?.definition?.find((c) => c.key === colKey)
@@ -562,6 +647,15 @@ function Invoices() {
                 </ResizableHeaderCell>
               </TableRow>
               <TableRow>
+                <TableCell
+                  padding="checkbox"
+                  sx={{
+                    ...selectColSx,
+                    verticalAlign: 'top',
+                    py: 0.75,
+                    borderBottom: (t) => `1px solid ${t.palette.divider}`,
+                  }}
+                />
                 {resizableOrder.map((colKey) => (
                   <InvoiceFilterCell
                     key={`f-${colKey}`}
@@ -592,7 +686,7 @@ function Invoices() {
             <TableBody>
               {rows.length === 0 && !listLoading && (
                 <TableRow>
-                  <TableCell colSpan={nDataCols + 1} align="center">
+                  <TableCell colSpan={nDataCols + 2} align="center">
                     <Typography color="textSecondary" py={2}>
                       Aucune facture
                     </Typography>
@@ -603,9 +697,25 @@ function Invoices() {
                 <TableRow
                   key={inv.id}
                   hover
-                  onDoubleClick={() => navigate(`/pharmacies/${inv.pharmacy_id}`)}
+                  selected={selectedInvoiceIds.has(inv.id)}
+                  onDoubleClick={() => navigateToPharmacy(inv.pharmacy_id)}
                   sx={{ cursor: 'pointer' }}
                 >
+                  <TableCell
+                    padding="checkbox"
+                    sx={selectColSx}
+                    onClick={(e) => e.stopPropagation()}
+                    onDoubleClick={(e) => e.stopPropagation()}
+                  >
+                    <Checkbox
+                      size="small"
+                      checked={selectedInvoiceIds.has(inv.id)}
+                      onChange={() => toggleSelectRow(inv.id)}
+                      inputProps={{
+                        'aria-label': `Sélectionner la facture ${inv.invoice_number || inv.id}`,
+                      }}
+                    />
+                  </TableCell>
                   {resizableOrder.map((colKey) => (
                     <InvoiceTableBodyCell
                       key={`${inv.id}-${colKey}`}
@@ -620,7 +730,9 @@ function Invoices() {
               ))}
             </TableBody>
           </Table>
+          </Box>
           <TablePagination
+            sx={{ flexShrink: 0, borderTop: 1, borderColor: 'divider' }}
             component="div"
             count={total}
             page={page}
@@ -633,7 +745,7 @@ function Invoices() {
             rowsPerPageOptions={[10, 25, 50, 100]}
             labelRowsPerPage="Lignes par page"
           />
-        </TableContainer>
+        </Paper>
       </Box>
     </Box>
   )

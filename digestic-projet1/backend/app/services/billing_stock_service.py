@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 import app.db.models as orm
@@ -60,12 +60,26 @@ def apply_deposit_to_pharmacy(
         return
     ws = _ensure_warehouse_stock_row(db, warehouse_id, product_id)
     wh = db.get(orm.Warehouse, warehouse_id)
-    # L'écran Dépôts alimente `warehouses.quantity` ; la facturation utilise
-    # `warehouse_stocks`. Si le stock produit n'a jamais été renseigné (0) mais
-    # le total dépôt est > 0, on aligne une fois pour refléter la réalité.
-    if ws.quantity == 0 and wh is not None and wh.quantity > 0:
-        ws.quantity = int(wh.quantity)
-        db.flush()
+    # L'écran Dépôts alimente `warehouses.quantity` ; les sorties BL décrémentent
+    # `warehouse_stocks`. Si une ligne produit est en retard (ex. 1) alors que le dépôt
+    # affiche 2000, aligner — uniquement si ce dépôt n'a qu'une ligne stock (monoproduit),
+    # pour ne pas gonfler une référence quand plusieurs produits partagent le même total.
+    n_stock_lines = int(
+        db.execute(
+            select(func.count())
+            .select_from(orm.WarehouseStock)
+            .where(orm.WarehouseStock.warehouse_id == warehouse_id)
+        ).scalar_one()
+        or 0
+    )
+    if wh is not None:
+        wh_q = int(wh.quantity)
+        if n_stock_lines <= 1 and ws.quantity < wh_q:
+            ws.quantity = wh_q
+            db.flush()
+        elif ws.quantity == 0 and wh_q > 0:
+            ws.quantity = wh_q
+            db.flush()
 
     if ws.quantity < quantity:
         raise ValueError(

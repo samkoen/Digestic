@@ -28,6 +28,7 @@ class Pharmacy:
     next_visit_date: Optional[str] = None  # Date de la prochaine visite (ISO format)
     photo_url: Optional[str] = None
     payment_mode: str = "virement 30 jours"
+    reduction: float = 0.0  # pourcentage 0–100 (HT), appliqué BL et facturation dépôt
     created_at: str = None
     updated_at: str = None
     
@@ -49,9 +50,13 @@ class Pharmacy:
             'id', 'name', 'address', 'city', 'postal_code', 'warehouse_id', 'country', 'email', 'phone',
             'latitude', 'longitude', 'pharmacist_name', 'pharmacist_email', 'pharmacist_phone',
             'rib', 'status', 'commercial_id', 'last_visit_at', 'next_visit_date', 'photo_url', 'payment_mode',
+            'reduction', 'reduction_percent',
             'created_at', 'updated_at'
         }
         filtered_data = {k: v for k, v in data.items() if k in valid_fields}
+        rp = filtered_data.pop("reduction_percent", None)
+        if "reduction" not in filtered_data and rp is not None:
+            filtered_data["reduction"] = rp
         if "status" in filtered_data and (filtered_data["status"] is None or filtered_data["status"] == ""):
             del filtered_data["status"]
         # Ancien booléen API

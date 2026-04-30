@@ -14,7 +14,7 @@ class DeliveryNote:
     bottles_count: int
     free_units_quantity: int = 0
     is_deposit_sale: bool = False
-    status: str = "pending"  # pending, sent, confirmed, fully_invoiced, draft
+    status: str = "pending"  # pending, sent, confirmed, fully_invoiced, draft, depot-vente (non facturable)
     sage_reference: Optional[str] = None  # Référence dans Sage (quand intégré)
     bl_number: Optional[str] = None  # ex. BL-20260428-A1B2C3D4
     email_sent: bool = False

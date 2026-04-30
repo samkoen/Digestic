@@ -16,4 +16,7 @@ export const INVOICE_COLUMN_MIN_PX = {
 
 export const INVOICE_TABLE_ACTIONS_PX = 100
 
+/** Colonne case à cocher (sélection de lignes). */
+export const INVOICE_SELECT_COL_PX = 52
+
 export { PHARM_TABLE_PX_STORAGE_V as INVOICE_TABLE_PX_STORAGE_V }

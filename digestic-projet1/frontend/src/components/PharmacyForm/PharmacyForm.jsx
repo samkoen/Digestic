@@ -40,6 +40,7 @@ function PharmacyForm({ open, onClose, pharmacy }) {
     payment_mode: DEFAULT_PAYMENT_MODE,
     status: 'actif',
     warehouse_id: '',
+    reduction: '0',
   })
   const [loading, setLoading] = useState(false)
   const [commercials, setCommercials] = useState([])
@@ -77,6 +78,10 @@ function PharmacyForm({ open, onClose, pharmacy }) {
         payment_mode: pharmacy.payment_mode || DEFAULT_PAYMENT_MODE,
         status: pharmacy.status || 'actif',
         warehouse_id: pharmacy.warehouse_id || '',
+        reduction:
+          pharmacy.reduction !== undefined && pharmacy.reduction !== null
+            ? String(pharmacy.reduction)
+            : '0',
       })
     } else {
       setFormData({
@@ -93,6 +98,7 @@ function PharmacyForm({ open, onClose, pharmacy }) {
         payment_mode: DEFAULT_PAYMENT_MODE,
         status: 'actif',
         warehouse_id: '',
+        reduction: '0',
       })
     }
   }, [pharmacy, open])
@@ -133,8 +139,10 @@ function PharmacyForm({ open, onClose, pharmacy }) {
     try {
       setLoading(true)
       setRibError('')
+      const red = parseFloat(String(formData.reduction).replace(',', '.'))
       const data = {
         ...formData,
+        reduction: Number.isFinite(red) ? Math.max(0, Math.min(100, red)) : 0,
         commercial_id: formData.commercial_id || null,
         photo_url: formData.photo_url || null,
       }
@@ -239,6 +247,18 @@ function PharmacyForm({ open, onClose, pharmacy }) {
                   </MenuItem>
                 ))}
               </ResizableTextField>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <ResizableTextField
+                fullWidth
+                label="Réduction (%)"
+                name="reduction"
+                type="number"
+                inputProps={{ min: 0, max: 100, step: '0.01' }}
+                value={formData.reduction}
+                onChange={handleChange}
+                helperText="Appliquée automatiquement sur les montants HT des BL et à la facturation depuis un BL."
+              />
             </Grid>
             <Grid item xs={12} sm={6}>
               <ResizableTextField

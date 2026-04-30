@@ -240,3 +240,23 @@ def send_delivery_note(
         return note.to_dict()
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@router.post("/{note_id}/valider-depot-vente")
+def validate_depot_vente_delivery_note(
+    note_id: str,
+    service: DeliveryNoteService = Depends(get_delivery_note_service),
+):
+    """Dépôt-vente → en attente (pending), permet la facturation ultérieure."""
+    try:
+        note = service.validate_depot_vente_to_pending(note_id)
+        if not note:
+            return JSONResponse(
+                {"error": "Bon de livraison non trouvé"},
+                status_code=404,
+            )
+        return note.to_dict()
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)

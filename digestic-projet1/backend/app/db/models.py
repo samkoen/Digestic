@@ -246,6 +246,9 @@ class Pharmacy(Base):
     payment_mode: Mapped[str] = mapped_column(
         String(80), nullable=False, default="virement 30 jours"
     )
+    reduction_percent: Mapped[float] = mapped_column(
+        Numeric(5, 2), nullable=False, default=0, server_default="0"
+    )
     gocardless_customer_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     gocardless_mandate_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     pharmacy_status: Mapped[str] = mapped_column(
@@ -381,6 +384,9 @@ class VisitReport(Base):
         String(32), default="immediate", nullable=False
     )
     returns_quantity: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    bl_reduction_percent: Mapped[float] = mapped_column(
+        Numeric(5, 2), nullable=False, default=0, server_default="0"
+    )
     return_source_visit_report_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("visit_reports.id", ondelete="SET NULL"),

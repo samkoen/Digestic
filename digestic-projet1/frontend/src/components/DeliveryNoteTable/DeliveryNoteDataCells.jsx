@@ -12,6 +12,7 @@ function blStatusColor(status) {
     fully_invoiced: 'default',
     draft: 'default',
     validated: 'warning',
+    'depot-vente': 'warning',
   }
   const key = status === 'valide' ? 'pending' : status
   return colors[key] || 'default'
@@ -24,6 +25,7 @@ const BL_STATUS_I18N = {
   fully_invoiced: 'Facturé',
   draft: 'Brouillon',
   validated: 'Validé (visite)',
+  'depot-vente': 'Dépôt-vente',
 }
 
 function blStatusLabel(status) {
@@ -37,7 +39,8 @@ function blStatusLabel(status) {
 /**
  * @param {object} p
  * @param {object} p.row — item API (to_dict + pharmacy_name, commercial_name, linked_invoices)
- * @param {object} p.ctx — formatDate, navigate, getPhotoUrl, onFacturer, handleDownloadPdf, pdfLoadingId
+ * @param {object} p.ctx — formatDate, navigateToPharmacy, getPhotoUrl, onFacturer, onValiderDepotVente,
+ *   handleDownloadPdf, pdfLoadingId, validatingDepotVenteId
  */
 export function DeliveryNoteTableBodyCell(p) {
   const { columnKey, row, fullWidths, ctx } = p
@@ -55,7 +58,7 @@ export function DeliveryNoteTableBodyCell(p) {
             noWrap
             title={name}
             sx={{ color: 'primary.main', cursor: 'pointer' }}
-            onClick={() => ctx?.navigate?.(`/pharmacies/${row.pharmacy_id}`)}
+            onClick={() => ctx?.navigateToPharmacy?.(row.pharmacy_id)}
           >
             {name || '—'}
           </Typography>
@@ -197,7 +200,10 @@ export function DeliveryNoteTableBodyCell(p) {
 
 export function DeliveryNoteActionsCell({ row, fullWidths, ctx }) {
   const w = fullWidths.actions
-  const disabled = (row.bottles_count || 0) < 1 || row.status === 'fully_invoiced'
+  const isDepotVente = row.status === 'depot-vente'
+  const invoiceDisabled =
+    (row.bottles_count || 0) < 1 || row.status === 'fully_invoiced'
+
   return (
     <TableCell
       align="right"
@@ -228,9 +234,29 @@ export function DeliveryNoteActionsCell({ row, fullWidths, ctx }) {
             </IconButton>
           </span>
         </Tooltip>
-        <Button size="small" variant="outlined" disabled={disabled} onClick={() => ctx.onFacturer(row)}>
-          Facturer
-        </Button>
+        {isDepotVente ? (
+          <Tooltip title="Marquer comme prêt à facturer (passage en en attente)">
+            <span>
+              <Button
+                size="small"
+                variant="outlined"
+                color="primary"
+                disabled={ctx.validatingDepotVenteId === row.id}
+                onClick={() => ctx.onValiderDepotVente(row)}
+              >
+                {ctx.validatingDepotVenteId === row.id ? (
+                  <CircularProgress color="inherit" size={18} sx={{ mx: 0.5 }} />
+                ) : (
+                  'Valider'
+                )}
+              </Button>
+            </span>
+          </Tooltip>
+        ) : (
+          <Button size="small" variant="outlined" disabled={invoiceDisabled} onClick={() => ctx.onFacturer(row)}>
+            Facturer
+          </Button>
+        )}
       </Box>
     </TableCell>
   )

@@ -7,7 +7,6 @@ import {
   Table,
   TableBody,
   TableCell,
-  TableContainer,
   TableHead,
   TableRow,
   Paper,
@@ -33,6 +32,7 @@ import { PharmacyTableBodyCell } from '../../components/PharmacyTable/PharmacyDa
 import { PharmacyFilterCell } from '../../components/PharmacyTable/PharmacyFilterCells'
 import { PharmacySavedFiltersBar } from '../../components/PharmacyTable/PharmacySavedFiltersBar'
 import { PHARMACY_COLUMN_MIN_PX, PHARM_TABLE_ACTIONS_PX } from '../../constants/pharmacyTableMinWidths'
+import { LIST_TABLE_SCROLL_MAX_HEIGHT } from '../../constants/listTableLayout'
 import {
   EMPTY_PHARMACY_FILTERS,
   buildPharmacyListQueryParams,
@@ -609,13 +609,21 @@ function Pharmacies() {
       )}
 
       <Box ref={setTableContainerRef} sx={{ width: '100%', minWidth: 0 }}>
-        <TableContainer
-          component={Paper}
-          sx={{ position: 'relative', overflowX: 'auto', width: '100%' }}
+        <Paper
+          elevation={2}
+          sx={{
+            display: 'flex',
+            flexDirection: 'column',
+            width: '100%',
+            maxHeight: LIST_TABLE_SCROLL_MAX_HEIGHT,
+            overflow: 'hidden',
+          }}
         >
-          {listLoading && <LinearProgress sx={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 1 }} />}
-          <Table
-            size="small"
+          <Box sx={{ position: 'relative', flex: '1 1 auto', minHeight: 0, overflow: 'auto' }}>
+            {listLoading && <LinearProgress sx={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 2 }} />}
+            <Table
+              stickyHeader
+              size="small"
             sx={{
               tableLayout: 'fixed',
               width: '100%',
@@ -777,7 +785,9 @@ function Pharmacies() {
               ))}
             </TableBody>
           </Table>
+          </Box>
           <TablePagination
+            sx={{ flexShrink: 0, borderTop: 1, borderColor: 'divider' }}
             component="div"
             count={total}
             page={page}
@@ -790,7 +800,7 @@ function Pharmacies() {
             rowsPerPageOptions={[10, 25, 50, 100]}
             labelRowsPerPage="Lignes par page"
           />
-        </TableContainer>
+        </Paper>
       </Box>
 
       <PharmacyForm open={openForm} onClose={handleFormClose} pharmacy={editingPharmacy} />

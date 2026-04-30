@@ -79,8 +79,12 @@ class InvoiceService:
         return overdue
     
     def get_invoices_by_pharmacy(self, pharmacy_id: str) -> List[Invoice]:
-        """Récupère les factures d'une pharmacie"""
+        """Récupère les factures d'une pharmacie (modèles domaine)."""
         return self.repository.find_by_pharmacy(pharmacy_id)
+
+    def get_pharmacy_invoice_table_rows(self, pharmacy_id: str) -> List[dict[str, Any]]:
+        """Liste factures pharmacie enrichie (lignes BL, bouteilles payantes, remise) pour UI."""
+        return self.repository.pharmacy_invoice_detail_dicts(pharmacy_id)
 
     def list_invoices_paginated(
         self,

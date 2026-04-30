@@ -4,8 +4,8 @@ Revision ID: n3o4_product_sage_pricing
 Revises: l1m2_saved_list_filters_unify
 Create Date: 2026-04-27
 
-Référence : facture Sage N° 172025 — 12 flacons, 453,60 € HT, TVA 5,5 % (24,95 €), TTC 478,55 €,
-soit 37,80 € HT par flacon.
+Référence historique N°172025 (37,80 € HT/u). Voir migration `u5v6_billing_digest01` pour l’alignement
+sur la facture type N°171599 (DIGEST01, 21 € HT, TVA 5,5 %).
 """
 
 from __future__ import annotations

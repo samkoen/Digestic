@@ -1,5 +1,6 @@
 import {
   DELIVERY_NOTE_TABLE_ACTIONS_PX,
+  DELIVERY_NOTE_SELECT_COL_PX,
   DELIVERY_NOTE_COLUMN_MIN_PX,
 } from '../constants/deliveryNoteTableMinWidths'
 import { PHARM_TABLE_PX_STORAGE_V } from '../constants/pharmacyTableMinWidths'
@@ -56,4 +57,5 @@ export {
   defaultEqualFractions,
   DELIVERY_NOTE_COLUMN_MIN_PX,
   DELIVERY_NOTE_TABLE_ACTIONS_PX,
+  DELIVERY_NOTE_SELECT_COL_PX,
 }

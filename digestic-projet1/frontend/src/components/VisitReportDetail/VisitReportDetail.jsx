@@ -50,6 +50,7 @@ function VisitReportDetail({ open, onClose, report, onUpdate }) {
     video_note_url: '',
     delivery_mode: 'normal',
     notes: '',
+    bl_reduction: 0,
   })
 
   useEffect(() => {
@@ -73,6 +74,7 @@ function VisitReportDetail({ open, onClose, report, onUpdate }) {
         video_note_url: report.video_note_url || '',
         delivery_mode: report.delivery_mode || 'normal',
         notes: report.notes || '',
+        bl_reduction: report.bl_reduction ?? 0,
       })
       setIsEditing(false)
     }
@@ -129,10 +131,16 @@ function VisitReportDetail({ open, onClose, report, onUpdate }) {
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target
-    setFormData((prev) => ({
-      ...prev,
-      [name]: type === 'checkbox' ? checked : value,
-    }))
+    setFormData((prev) => {
+      const next = {
+        ...prev,
+        [name]: type === 'checkbox' ? checked : value,
+      }
+      if (name === 'has_deposit' && type === 'checkbox' && !checked) {
+        next.delivery_mode = 'normal'
+      }
+      return next
+    })
   }
 
   const handleMediaUpload = async (field) => {
@@ -171,8 +179,10 @@ function VisitReportDetail({ open, onClose, report, onUpdate }) {
     try {
       setLoading(true)
       const { weeks_until_return, next_visit_date: _nvd, ...rest } = formData
+      const br = parseFloat(String(formData.bl_reduction).replace(',', '.'))
       const updateData = {
         ...rest,
+        bl_reduction: Number.isFinite(br) ? Math.max(0, Math.min(100, br)) : 0,
         voice_note_url: formData.voice_note_url || null,
         photo_note_url: formData.photo_note_url || null,
         video_note_url: formData.video_note_url || null,
@@ -213,6 +223,7 @@ function VisitReportDetail({ open, onClose, report, onUpdate }) {
         video_note_url: report.video_note_url || '',
         delivery_mode: report.delivery_mode || 'normal',
         notes: report.notes || '',
+        bl_reduction: report.bl_reduction ?? 0,
       })
     }
     setIsEditing(false)
@@ -436,24 +447,51 @@ function VisitReportDetail({ open, onClose, report, onUpdate }) {
                     </Grid>
                     <Grid item xs={12} sm={4}>
                       <Typography variant="body2" color="text.secondary">
-                        Mode de livraison
+                        Réduction BL (ce rapport)
                       </Typography>
                       {isEditing ? (
                         <TextField
                           fullWidth
-                          select
-                          name="delivery_mode"
-                          value={formData.delivery_mode}
+                          type="number"
+                          name="bl_reduction"
+                          inputProps={{ min: 0, max: 100, step: '0.01' }}
+                          value={formData.bl_reduction}
                           onChange={handleChange}
                           sx={{ mt: 1 }}
-                        >
-                          <MenuItem value="normal">Normal</MenuItem>
-                          <MenuItem value="deposit_sale">Dépôt-vente</MenuItem>
-                        </TextField>
+                          helperText="% HT sur ce BL après réduction pharmacie"
+                        />
+                      ) : (
+                        <Typography variant="body1" fontWeight="medium" sx={{ mt: 1 }}>
+                          {report.bl_reduction != null && Number(report.bl_reduction) > 0
+                            ? `${Number(report.bl_reduction)} %`
+                            : '—'}
+                        </Typography>
+                      )}
+                    </Grid>
+                    <Grid item xs={12} sm={4}>
+                      <Typography variant="body2" color="text.secondary">
+                        Dépôt-vente
+                      </Typography>
+                      {isEditing ? (
+                        <FormControlLabel
+                          sx={{ mt: 1, ml: 0 }}
+                          control={
+                            <Checkbox
+                              checked={formData.delivery_mode === 'deposit_sale'}
+                              onChange={(e) =>
+                                setFormData((p) => ({
+                                  ...p,
+                                  delivery_mode: e.target.checked ? 'deposit_sale' : 'normal',
+                                }))
+                              }
+                            />
+                          }
+                          label="Dépôt-vente"
+                        />
                       ) : (
                         <Chip
-                          label={report.delivery_mode === 'deposit_sale' ? 'Dépôt-vente' : 'Normal'}
-                          color={report.delivery_mode === 'deposit_sale' ? 'warning' : 'info'}
+                          label={report.delivery_mode === 'deposit_sale' ? 'Oui' : 'Non'}
+                          color={report.delivery_mode === 'deposit_sale' ? 'warning' : 'default'}
                           size="small"
                           sx={{ mt: 1 }}
                         />

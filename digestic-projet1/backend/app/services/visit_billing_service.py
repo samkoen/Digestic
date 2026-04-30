@@ -9,10 +9,10 @@ from sqlalchemy.orm import Session
 
 import app.db.models as orm
 from app.core.payment_modes import is_depot_vente
+from app.models.visit_report import VisitReport
 from app.db import mappers as mp
 from app.domain.billing.delivery_note_number import new_digestic_bl_number
 from app.models.delivery_note import DeliveryNote
-from app.models.visit_report import VisitReport
 from app.repositories.delivery_note_repository import DeliveryNoteRepository
 from app.repositories.product_repository import get_default_billing_product_row
 from app.services.billing_stock_service import (
@@ -48,6 +48,10 @@ class VisitBillingOrchestrator:
         uid = mp.parse_uuid(report.commercial_id)
 
         if has_shipment:
+            depot_vente_flow = getattr(report, "delivery_mode", "") == "deposit_sale" or is_depot_vente(
+                getattr(report, "payment_mode", None)
+            )
+            bl_status = "depot-vente" if depot_vente_flow else "pending"
             dday = mp.parse_date(report.visit_date)
             dn = DeliveryNote(
                 id=str(uuid.uuid4()),
@@ -57,9 +61,9 @@ class VisitBillingOrchestrator:
                 delivery_date=report.visit_date,
                 bottles_count=report.bottles_deposited,
                 free_units_quantity=report.free_units,
-                is_deposit_sale=is_depot_vente(report.payment_mode),
-                # Statut métier = en attente (envoi / suite) ; la validation visite est portée par validated_at.
-                status="pending",
+                is_deposit_sale=depot_vente_flow,
+                # depot-vente : pas de facturation ; sinon en attente (envoi / suite).
+                status=bl_status,
                 bl_number=new_digestic_bl_number(for_date=dday),
                 email_sent=False,
             )
@@ -90,7 +94,7 @@ class VisitBillingOrchestrator:
                     user_id=uid,
                 )
 
-            deposit_orm.status = "pending"
+            deposit_orm.status = bl_status
             deposit_orm.validated_at = datetime.now(timezone.utc)
             self._db.flush()
 

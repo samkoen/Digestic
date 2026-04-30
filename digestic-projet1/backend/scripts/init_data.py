@@ -370,7 +370,7 @@ def generate_delivery_notes(visit_reports):
                 "delivery_date": visit_date.isoformat(),
                 "bottles_count": report["bottles_deposited"],
                 "is_deposit_sale": report["delivery_mode"] == "deposit_sale",
-                "status": "sent" if random.random() < 0.8 else "pending",
+                "status": ("depot-vente" if report["delivery_mode"] == "deposit_sale" else ("sent" if random.random() < 0.8 else "pending")),
                 "sage_reference": f"BL-{random.randint(1000, 9999)}" if random.random() < 0.5 else None,
                 "email_sent": random.random() < 0.7,
                 "email_sent_at": (visit_date + timedelta(hours=2)).isoformat() if random.random() < 0.7 else None,

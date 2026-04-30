@@ -1,5 +1,6 @@
 import {
   INVOICE_TABLE_ACTIONS_PX,
+  INVOICE_SELECT_COL_PX,
   INVOICE_COLUMN_MIN_PX,
 } from '../constants/invoiceTableMinWidths'
 import { PHARM_TABLE_PX_STORAGE_V } from '../constants/pharmacyTableMinWidths'
@@ -56,4 +57,5 @@ export {
   defaultEqualFractions,
   INVOICE_COLUMN_MIN_PX,
   INVOICE_TABLE_ACTIONS_PX,
+  INVOICE_SELECT_COL_PX,
 }

@@ -61,10 +61,10 @@ def get_invoices(
             }
         if overdue:
             invoices = service.get_overdue_invoices(days)
-        elif pharmacy_id:
-            invoices = service.get_invoices_by_pharmacy(pharmacy_id)
-        else:
-            invoices = service.get_all_invoices()
+            return [invoice.to_dict() for invoice in invoices]
+        if pharmacy_id:
+            return service.get_pharmacy_invoice_table_rows(pharmacy_id)
+        invoices = service.get_all_invoices()
         return [invoice.to_dict() for invoice in invoices]
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)

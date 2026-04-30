@@ -9,6 +9,11 @@ from sqlalchemy.orm import Session
 import app.db.models as orm
 from app.db import mappers as mp
 from app.domain.billing.due_date import due_date_for_invoice
+from app.domain.billing.pharmacy_reduction import (
+    normalize_pharmacy_reduction_pct,
+    stacked_equivalent_single_discount_pct,
+    stacked_line_ht_after_reductions,
+)
 from app.integrations.vosfactures import get_vosfactures_invoice_issuer
 from app.models.delivery_note import DeliveryNote
 from app.models.invoice import Invoice
@@ -59,14 +64,26 @@ class DeliveryNoteService:
         return self.repository.update(note_id, existing)
 
     def mark_as_sent(self, note_id: str) -> Optional[DeliveryNote]:
-        return self.update_delivery_note(
-            note_id,
-            {
-                "email_sent": True,
-                "email_sent_at": datetime.now().isoformat(),
-                "status": "sent",
-            },
-        )
+        existing = self.repository.find_by_id(note_id)
+        if not existing:
+            return None
+        payload = {
+            "email_sent": True,
+            "email_sent_at": datetime.now().isoformat(),
+        }
+        # Conserver le statut dépôt-vente (pas de facturation ; envoi mail ≠ passage en « envoyé » facturable).
+        if (existing.status or "").strip() != "depot-vente":
+            payload["status"] = "sent"
+        return self.update_delivery_note(note_id, payload)
+
+    def validate_depot_vente_to_pending(self, note_id: str) -> DeliveryNote | None:
+        """Passe un BL « dépôt-vente » en statut facturable (« en attente » / pending)."""
+        existing = self.repository.find_by_id(note_id)
+        if not existing:
+            return None
+        if (existing.status or "").strip() != "depot-vente":
+            raise ValueError("Seuls les bons au statut dépôt-vente peuvent être validés ainsi.")
+        return self.update_delivery_note(note_id, {"status": "pending"})
 
     def get_delivery_notes_by_pharmacy(self, pharmacy_id: str) -> List[DeliveryNote]:
         return self.repository.find_by_pharmacy(pharmacy_id)
@@ -159,6 +176,8 @@ class DeliveryNoteService:
         note = self.repository.find_by_id(note_id)
         if not note:
             raise ValueError("Bon de livraison introuvable")
+        if (note.status or "").strip() == "depot-vente":
+            raise ValueError("Les bons au statut dépôt-vente ne peuvent pas être facturés.")
         note_bc = int(note.bottles_count or 0)
         if bottles_to_invoice <= 0 or bottles_to_invoice > note_bc:
             raise ValueError(
@@ -195,6 +214,15 @@ class DeliveryNoteService:
         pid = product_row.id
         unit_ht = float(product_row.wholesale_unit_price)
         vat_rate = float(product_row.vat_rate)
+        product_code = (product_row.code or "").strip()
+        r_pct = normalize_pharmacy_reduction_pct(getattr(pharmacy, "reduction", None))
+        vr_pct = 0.0
+        if deposit_row and getattr(deposit_row, "visit_report_id", None):
+            vrow = self._db.get(orm.VisitReport, deposit_row.visit_report_id)
+            if vrow is not None:
+                vr_pct = normalize_pharmacy_reduction_pct(
+                    float(getattr(vrow, "bl_reduction_percent", 0) or 0)
+                )
 
         full_paying_convert = bottles_to_invoice == note_bc
         free_qty = int(note.free_units_quantity or 0) if full_paying_convert else 0
@@ -204,10 +232,12 @@ class DeliveryNoteService:
         total_ht = 0.0
         total_vat = 0.0
 
-        lht = round(bottles_to_invoice * unit_ht, 4)
+        gross_ht = round(bottles_to_invoice * unit_ht, 4)
+        lht = round(stacked_line_ht_after_reductions(gross_ht, r_pct, vr_pct), 4)
         lvat = round(lht * (vat_rate / 100.0), 4)
         total_ht += lht
         total_vat += lvat
+        combined_discount = stacked_equivalent_single_discount_pct(r_pct, vr_pct)
         lines_spec.append(
             {
                 "product_id": str(pid),
@@ -215,7 +245,7 @@ class DeliveryNoteService:
                 "unit_price": unit_ht,
                 "vat_rate": vat_rate,
                 "is_free_unit": False,
-                "discount_percent": 0.0,
+                "discount_percent": float(combined_discount) if combined_discount else 0.0,
                 "line_total_ht": lht,
                 "reference_unit_price_ht": None,
             }
@@ -223,10 +253,12 @@ class DeliveryNoteService:
         mock_lines.append(
             {
                 "label": product_row.name,
+                "product_code": product_code,
                 "quantity": bottles_to_invoice,
                 "unit_price_ht": unit_ht,
                 "vat_rate_percent": vat_rate,
                 "line_ht": lht,
+                "discount_percent": float(combined_discount) if combined_discount else 0.0,
                 "nature": "paying",
             }
         )
@@ -246,7 +278,9 @@ class DeliveryNoteService:
             )
             mock_lines.append(
                 {
-                    "label": f"{product_row.name} (UG)",
+                    # Même désignation que sur la facture Sage (ligne UG).
+                    "label": product_row.name,
+                    "product_code": product_code,
                     "quantity": free_qty,
                     "unit_price_ht": 0.0,
                     "reference_value_ht": unit_ht,

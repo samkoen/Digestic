@@ -112,6 +112,7 @@ def pharm_orm_to_domain(p: orm.Pharmacy, warehouse: orm.Warehouse | None = None)
         next_visit_date=p.next_visit_date.isoformat() if p.next_visit_date else None,
         photo_url=p.photo_url,
         payment_mode=_payment_to_api(p.payment_mode),
+        reduction=float(getattr(p, "reduction_percent", 0) or 0),
         created_at=parse_datetime_iso(p.created_at) if p.created_at else None,
         updated_at=parse_datetime_iso(p.updated_at) if p.updated_at else None,
     )
@@ -166,6 +167,7 @@ def report_orm_to_domain(r: orm.VisitReport) -> VisitReport:
             if getattr(r, "return_source_visit_report_id", None)
             else None
         ),
+        bl_reduction=float(getattr(r, "bl_reduction_percent", 0) or 0),
         created_at=parse_datetime_iso(r.created_at) if r.created_at else None,
         updated_at=parse_datetime_iso(r.updated_at) if r.updated_at else None,
     )

@@ -19,6 +19,7 @@ class VisitReport:
     billing_type: str = "immediate"  # immediate | monthly_recap
     returns_quantity: int = 0  # Retour physique (visite / dépôt antérieur)
     return_source_visit_report_id: Optional[str] = None
+    bl_reduction: float = 0.0  # % HT sur ce BL uniquement (cumul après réduction pharmacie)
     stock_status: str = "unknown"  # good, low, out_of_stock, unknown
     display_stand_status: str = "unknown"  # in_place, not_in_place, unknown
     covering_status: str = "unknown"  # in_place, to_order, unknown

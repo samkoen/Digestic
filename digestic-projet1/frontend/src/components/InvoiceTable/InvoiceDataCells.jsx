@@ -17,7 +17,7 @@ function getStatusColor(status) {
 /**
  * @param {object} p
  * @param {object} p.invoice — to_dict + pharmacy_name
- * @param {object} p.ctx — formatDate, canDownloadVosFacturesPdf, handleDownloadPdf, pdfLoadingId, navigate
+ * @param {object} p.ctx — formatDate, canDownloadVosFacturesPdf, handleDownloadPdf, pdfLoadingId, navigateToPharmacy
  */
 export function InvoiceTableBodyCell(p) {
   const { columnKey, invoice, fullWidths, ctx } = p
@@ -39,7 +39,7 @@ export function InvoiceTableBodyCell(p) {
           noWrap
           title={invoice.pharmacy_name}
           sx={{ color: 'primary.main', cursor: 'pointer' }}
-          onClick={() => ctx?.navigate?.(`/pharmacies/${invoice.pharmacy_id}`)}
+          onClick={() => ctx?.navigateToPharmacy?.(invoice.pharmacy_id)}
         >
           {invoice.pharmacy_name || '—'}
         </Typography>

@@ -80,6 +80,7 @@ class VisitReportRepository:
                 if getattr(model, "return_source_visit_report_id", None)
                 else None
             ),
+            bl_reduction_percent=float(getattr(model, "bl_reduction", 0) or 0),
         )
         self._db.add(row)
         self._db.flush()
@@ -129,6 +130,8 @@ class VisitReportRepository:
                 if model.return_source_visit_report_id
                 else None
             )
+        if hasattr(model, "bl_reduction"):
+            row.bl_reduction_percent = float(model.bl_reduction or 0)
         self._db.flush()
         return mp.report_orm_to_domain(row)
 
