@@ -46,6 +46,45 @@ export const deliveryNoteService = {
     return response.data
   },
 
+  rectifierBon: async (noteId, body = {}) => {
+    const { data } = await api.post(`/delivery-notes/${noteId}/rectifier`, body)
+    return data
+  },
+
+  /**
+   * Annule un bon (admin) : contre-passation stock si pas facturé.
+   */
+  annulerBon: async (noteId) => {
+    const { data } = await api.post(`/delivery-notes/${noteId}/annuler`)
+    return data
+  },
+
+  /** Brouillon depuis le modèle admin (sans effet serveur sur le bon). */
+  getEmailDraft: async (noteId) => {
+    const { data } = await api.get(`/delivery-notes/${noteId}/email-draft`)
+    return data
+  },
+
+  /**
+   * Envoi e-mail BL (objet/corps tels que saisis après prévisualisation). Marque le bon comme envoyé.
+   */
+  sendEmail: async (noteId, { subject, body_html }) => {
+    const { data } = await api.post(`/delivery-notes/${noteId}/send-email`, {
+      subject,
+      body_html,
+    })
+    return data
+  },
+
+  /**
+   * Bon sans rapport de visite (admin uniquement).
+   * @param {object} body — pharmacy_id, delivery_date, bottles_count, free_units_quantity, bl_billing_mode?, commercial_id?
+   */
+  createStandalone: async (body) => {
+    const { data } = await api.post('/delivery-notes/standalone', body)
+    return data
+  },
+
   /**
    * Télécharge le PDF du bon de livraison (généré côté serveur).
    */

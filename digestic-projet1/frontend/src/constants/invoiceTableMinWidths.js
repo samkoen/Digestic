@@ -14,7 +14,7 @@ export const INVOICE_COLUMN_MIN_PX = {
   daysOverdue: 112,
 }
 
-export const INVOICE_TABLE_ACTIONS_PX = 100
+export const INVOICE_TABLE_ACTIONS_PX = 248
 
 /** Colonne case à cocher (sélection de lignes). */
 export const INVOICE_SELECT_COL_PX = 52

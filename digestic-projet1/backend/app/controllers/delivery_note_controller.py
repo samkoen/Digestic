@@ -7,12 +7,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.dependencies import get_db
+from app.auth.session_roles import require_admin_user_id
 from app.domain.delivery_note_table_columns import DELIVERY_NOTE_SORT_KEYS
 from app.pagination import MAX_PAGE_SIZE
 from app.repositories.delivery_note_repository import DeliveryNoteRepository
 from app.repositories.invoice_repository import InvoiceRepository
 from app.repositories.pharmacy_repository import PharmacyRepository
 from app.services.delivery_note_service import DeliveryNoteService
+from app.schemas.email_send import SendTransactionalEmailBody
 from app.pdf.delivery_note_pdf import pdf_content_disposition_header
 
 logger = logging.getLogger(__name__)
@@ -97,6 +99,43 @@ def download_delivery_note_pdf(
             media_type="application/pdf",
             headers={"Content-Disposition": pdf_content_disposition_header(filename)},
         )
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@router.get("/{note_id}/email-draft")
+def get_delivery_note_email_draft(
+    note_id: str,
+    service: DeliveryNoteService = Depends(get_delivery_note_service),
+):
+    """Retourne le brouillon d’e-mail (modèle HTML admin) avant envoi — pas d’effet de bord."""
+    try:
+        return service.get_delivery_note_email_draft(note_id)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@router.post("/{note_id}/send-email")
+def send_delivery_note_email(
+    note_id: str,
+    body: SendTransactionalEmailBody = Body(default_factory=SendTransactionalEmailBody),
+    service: DeliveryNoteService = Depends(get_delivery_note_service),
+):
+    """Envoie le BL par e-mail à l’adresse de la pharmacie (simulation sans SMTP si non configuré)."""
+    try:
+        return service.send_delivery_note_email_to_pharmacy(
+            note_id,
+            subject=body.subject,
+            body_html=body.body_html,
+        )
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except RuntimeError as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
@@ -127,6 +166,24 @@ def create_delivery_note(
         note = service.create_delivery_note(data)
         return note.to_dict()
     except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@router.post("/standalone", status_code=201)
+def create_standalone_delivery_note(
+    request: Request,
+    data: dict[str, Any],
+    service: DeliveryNoteService = Depends(get_delivery_note_service),
+):
+    """Création d'un bon sans rapport de visite (stock + lignes comme après visite). Réservé admin."""
+    require_admin_user_id(request)
+    try:
+        note = service.create_standalone_delivery_note_admin(dict(data))
+        return note.to_dict()
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except Exception as e:
+        logger.exception("Création BL standalone")
         return JSONResponse({"error": str(e)}, status_code=400)
 
 
@@ -238,6 +295,8 @@ def send_delivery_note(
                 status_code=404,
             )
         return note.to_dict()
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
@@ -260,3 +319,39 @@ def validate_depot_vente_delivery_note(
         return JSONResponse({"error": str(e)}, status_code=400)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@router.post("/{note_id}/annuler")
+def annuler_delivery_note(
+    request: Request,
+    note_id: str,
+    service: DeliveryNoteService = Depends(get_delivery_note_service),
+):
+    """Annule un bon non facturé (stock remonté, statut cancelled). Admin uniquement."""
+    uid = require_admin_user_id(request)
+    try:
+        note = service.cancel_delivery_note_admin(note_id, uid)
+        return note.to_dict()
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except Exception as e:
+        logger.exception("Annulation BL %s", note_id)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@router.post("/{note_id}/rectifier", status_code=201)
+def rectifier_delivery_note(
+    request: Request,
+    note_id: str,
+    data: dict[str, Any] | None = Body(default=None),
+    service: DeliveryNoteService = Depends(get_delivery_note_service),
+):
+    """Annule le bon source puis crée un bon rectificatif (même pharmacie). Admin uniquement."""
+    uid = require_admin_user_id(request)
+    try:
+        return service.replace_delivery_note_with_rectified_admin(note_id, uid, dict(data or {}))
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except Exception as e:
+        logger.exception("BL rectificatif %s", note_id)
+        return JSONResponse({"error": str(e)}, status_code=400)

@@ -1,77 +1,220 @@
 """
-Service pour l'envoi d'emails
-Pour l'instant, simule l'envoi d'email. Plus tard, intégrer avec un service d'email réel (SMTP, SendGrid, etc.)
+Service pour l'envoi d'e-mails — contenu depuis les modèles HTML configurés en base.
+Pour l'instant envoi simulé (journalisation).
 """
-from typing import Optional
+from __future__ import annotations
+
+import html as html_escape
 import logging
+from typing import Any
+
+from sqlalchemy.orm import Session
+
+from app.domain.email_template_catalog import (
+    TEMPLATE_DELIVERY_NOTE_SEND,
+    TEMPLATE_INVOICE_SEND,
+    TEMPLATE_INVOICE_UNPAID_REMINDER,
+)
+from app.repositories.email_template_repository import EmailTemplateRepository
+from app.utils.email_template_render import interpolate_template
 
 logger = logging.getLogger(__name__)
 
+
+def _money_fr(amount: float | None) -> str:
+    if amount is None:
+        return ""
+    return f"{float(amount):.2f}".replace(".", ",")
+
+
 class EmailService:
-    """Service pour l'envoi d'emails"""
-    
-    def __init__(self):
-        # Configuration email (à configurer plus tard)
-        self.smtp_server = None
-        self.smtp_port = None
-        self.smtp_user = None
-        self.smtp_password = None
-    
-    def send_invoice_email(self, to_email: str, pharmacy_name: str, invoice_number: str, 
-                          invoice_amount: float, invoice_date: str) -> bool:
-        """
-        Envoie une facture par email
-        
-        Args:
-            to_email: Email du destinataire
-            pharmacy_name: Nom de la pharmacie
-            invoice_number: Numéro de facture
-            invoice_amount: Montant de la facture
-            invoice_date: Date de la facture
-        
-        Returns:
-            True si l'email a été envoyé avec succès
-        """
+    """Construit puis envoie (simulation) les e-mails à partir des modèles admin."""
+
+    def __init__(self, db: Session):
+        self._tpl = EmailTemplateRepository(db)
+
+    def _render_or_fallback(
+        self,
+        *,
+        template_key: str,
+        variables: dict[str, Any],
+        subject_fallback: str,
+        plain_body_fallback: str,
+    ) -> tuple[str, str]:
+        row = self._tpl.find_by_key(template_key)
+        if row is not None:
+            subj = interpolate_template(row.subject_template, variables)
+            body = interpolate_template(row.body_html_template, variables)
+            return subj.strip(), body
+        logger.warning(
+            "Modèle %s absent — repli texte brut. Exécuter les migrations et le bootstrap.",
+            template_key,
+        )
+        plain = interpolate_template(plain_body_fallback, variables)
+        subj_fb = interpolate_template(subject_fallback, variables)
+        escaped = html_escape.escape(plain)
+        wrapped = (
+            '<div style="font-family:system-ui,sans-serif;font-size:15px;line-height:1.5;color:#222;">'
+            f'<pre style="white-space:pre-wrap;font-family:inherit;margin:0;">{escaped}</pre></div>'
+        )
+        return subj_fb.strip(), wrapped
+
+    def prepare_invoice_email(
+        self,
+        *,
+        pharmacy_name: str,
+        invoice_number: str,
+        invoice_amount: float | None,
+        invoice_date: str | None,
+        due_date: str | None,
+    ) -> tuple[str, str]:
+        ctx = {
+            "pharmacy_name": pharmacy_name or "",
+            "invoice_number": invoice_number or "",
+            "invoice_amount": _money_fr(invoice_amount),
+            "invoice_date": invoice_date or "",
+            "due_date": due_date or "",
+        }
+        subj_fallback = "Facture {{ invoice_number }} — {{ pharmacy_name }}"
+        body_fallback = (
+            "Bonjour,\n\n"
+            "Veuillez trouver ci-joint la facture {{ invoice_number }} "
+            "pour {{ pharmacy_name }}, d'un montant de {{ invoice_amount }} €.\n\n"
+            "Date d'émission : {{ invoice_date }} — échéance : {{ due_date }}"
+        )
+        return self._render_or_fallback(
+            template_key=TEMPLATE_INVOICE_SEND,
+            variables=ctx,
+            subject_fallback=subj_fallback,
+            plain_body_fallback=body_fallback,
+        )
+
+    def send_invoice_email(
+        self,
+        to_email: str,
+        *,
+        pharmacy_name: str,
+        invoice_number: str,
+        invoice_amount: float | None,
+        invoice_date: str | None,
+        due_date: str | None,
+    ) -> bool:
+        subject, html = self.prepare_invoice_email(
+            pharmacy_name=pharmacy_name,
+            invoice_number=invoice_number,
+            invoice_amount=invoice_amount,
+            invoice_date=invoice_date,
+            due_date=due_date,
+        )
+        return self._log_send(to_email, subject, html, kind="facture")
+
+    def prepare_delivery_note_email(
+        self,
+        *,
+        pharmacy_name: str,
+        bl_number: str | None,
+        delivery_date: str | None,
+    ) -> tuple[str, str]:
+        ctx = {
+            "pharmacy_name": pharmacy_name or "",
+            "bl_number": bl_number or "—",
+            "delivery_date": delivery_date or "",
+        }
+        subj_fallback = "Bon de livraison — {{ pharmacy_name }}"
+        body_fallback = (
+            "Bonjour,\n\n"
+            "Veuillez trouver ci-joint le bon de livraison pour {{ pharmacy_name }} "
+            "(réf. {{ bl_number }}), date {{ delivery_date }}."
+        )
+        return self._render_or_fallback(
+            template_key=TEMPLATE_DELIVERY_NOTE_SEND,
+            variables=ctx,
+            subject_fallback=subj_fallback,
+            plain_body_fallback=body_fallback,
+        )
+
+    def send_delivery_note_email(
+        self,
+        to_email: str,
+        *,
+        pharmacy_name: str,
+        bl_number: str | None,
+        delivery_date: str | None,
+    ) -> bool:
+        subject, html = self.prepare_delivery_note_email(
+            pharmacy_name=pharmacy_name,
+            bl_number=bl_number,
+            delivery_date=delivery_date,
+        )
+        return self._log_send(to_email, subject, html, kind="BL")
+
+    def send_custom_body(
+        self,
+        to_email: str,
+        subject: str,
+        body_html: str,
+        *,
+        kind: str,
+    ) -> bool:
+        if not (subject or "").strip():
+            raise ValueError("L'objet est obligatoire.")
+        if not (body_html or "").strip():
+            raise ValueError("Le corps du message est obligatoire.")
+        return self._log_send(to_email, subject.strip(), body_html, kind=kind)
+
+    def send_invoice_unpaid_reminder_email(
+        self,
+        to_email: str,
+        *,
+        pharmacy_name: str,
+        invoice_number: str,
+        invoice_amount: float | None,
+        invoice_date: str | None,
+        due_date: str | None,
+        days_overdue: int | str,
+    ) -> bool:
+        ctx = {
+            "pharmacy_name": pharmacy_name or "",
+            "invoice_number": invoice_number or "",
+            "invoice_amount": _money_fr(invoice_amount),
+            "invoice_date": invoice_date or "",
+            "due_date": due_date or "",
+            "days_overdue": str(days_overdue),
+        }
+        subj_fallback = "Rappel — facture {{ invoice_number }}"
+        body_fallback = (
+            "Bonjour,\n\n"
+            "La facture {{ invoice_number }} pour {{ pharmacy_name }} "
+            "({{ invoice_amount }} €), émise le {{ invoice_date }}, "
+            "avec échéance {{ due_date }}, présente encore un solde ouvert "
+            "({{ days_overdue }} jour(s) de retard).\n\n"
+            "Merci de régulariser la situation."
+        )
+        subject, html = self._render_or_fallback(
+            template_key=TEMPLATE_INVOICE_UNPAID_REMINDER,
+            variables=ctx,
+            subject_fallback=subj_fallback,
+            plain_body_fallback=body_fallback,
+        )
+        return self._log_send(to_email, subject, html, kind="rappel_facture_impayée")
+
+    def _log_send(self, to_email: str, subject: str, body_html: str, *, kind: str) -> bool:
         try:
-            # Pour l'instant, on simule l'envoi
-            # Plus tard, intégrer avec un vrai service d'email
-            
-            subject = f"Facture {invoice_number} - {pharmacy_name}"
-            body = f"""
-Bonjour,
-
-Veuillez trouver ci-joint la facture {invoice_number} pour un montant de {invoice_amount:.2f} €.
-
-Date d'émission: {invoice_date}
-
-Cordialement,
-L'équipe Digestic
-            """
-            
-            # Log pour simulation (à remplacer par un vrai envoi)
-            logger.info(f"Email envoyé à {to_email}")
-            logger.info(f"Sujet: {subject}")
-            logger.info(f"Corps: {body}")
-            
-            # TODO: Intégrer avec un service d'email réel
-            # Exemple avec smtplib:
-            # import smtplib
-            # from email.mime.text import MIMEText
-            # from email.mime.multipart import MIMEMultipart
-            # msg = MIMEMultipart()
-            # msg['From'] = self.smtp_user
-            # msg['To'] = to_email
-            # msg['Subject'] = subject
-            # msg.attach(MIMEText(body, 'plain'))
-            # server = smtplib.SMTP(self.smtp_server, self.smtp_port)
-            # server.starttls()
-            # server.login(self.smtp_user, self.smtp_password)
-            # server.send_message(msg)
-            # server.quit()
-            
+            excerpt = body_html[:1200] + (" …[tronqué]" if len(body_html) > 1200 else "")
+            # Les logger INFO de `app.*` ne s’affichent souvent pas avec Uvicorn seul sans config logging.
+            print(
+                f"\n--- Simulation e-mail ({kind}) — pas de SMTP —\n"
+                f"  Destinataire : {to_email}\n"
+                f"  Objet        : {subject}\n"
+                f"  Corps HTML   :\n{excerpt}\n"
+                "---\n",
+                flush=True,
+            )
+            logger.info("[email:%s] -> %s", kind, to_email)
+            logger.info("Sujet: %s", subject)
+            logger.info("Corps HTML: %s", body_html[:2000])
+            # TODO: MIMEMultipart + pièces jointes + SMTP/SendGrid
             return True
         except Exception as e:
-            logger.error(f"Erreur lors de l'envoi de l'email: {str(e)}")
+            logger.error("Erreur lors de la préparation de l'e-mail: %s", e)
             return False
-
-

@@ -7,9 +7,12 @@ export default defineConfig({
     port: 3000,
     proxy: {
       '/api': {
-        target: 'http://localhost:5000',
+        // 127.0.0.1 évite sous Windows les blocages très longs quand localhost résout en IPv6 ::1 sans écoute
+        target: 'http://127.0.0.1:5000',
         changeOrigin: true,
         secure: false,
+        timeout: 30_000,
+        proxyTimeout: 30_000,
         configure: (proxy, _options) => {
           proxy.on('error', (err, _req, _res) => {
             console.log('proxy error', err);
@@ -23,9 +26,11 @@ export default defineConfig({
         },
       },
       '/uploads': {
-        target: 'http://localhost:5000',
+        target: 'http://127.0.0.1:5000',
         changeOrigin: true,
         secure: false,
+        timeout: 30_000,
+        proxyTimeout: 30_000,
       },
     }
   }

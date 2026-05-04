@@ -178,7 +178,6 @@ def deposit_orm_to_note(d: orm.Deposit) -> DeliveryNote:
     at_s: str | None = at.isoformat() if at is not None else None
     return DeliveryNote(
         id=str(d.id),
-        visit_report_id=str(d.visit_report_id),
         pharmacy_id=str(d.pharmacy_id),
         commercial_id=str(d.commercial_id),
         delivery_date=d.delivery_date.isoformat() if d.delivery_date else "",
@@ -190,6 +189,9 @@ def deposit_orm_to_note(d: orm.Deposit) -> DeliveryNote:
         bl_number=getattr(d, "bl_number", None),
         email_sent=d.email_sent,
         email_sent_at=at_s,
+        visit_report_id=(
+            str(d.visit_report_id) if getattr(d, "visit_report_id", None) is not None else None
+        ),
         created_at=parse_datetime_iso(d.created_at) if d.created_at else None,
         updated_at=parse_datetime_iso(d.updated_at) if d.updated_at else None,
     )

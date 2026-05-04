@@ -16,7 +16,10 @@ from app.integrations.vosfactures.config import (
     vosfactures_subdomain,
     vosfactures_test_documents,
 )
-from app.integrations.vosfactures.types import VosFacturesInvoiceResult
+from app.integrations.vosfactures.types import (
+    VosFacturesCreditNoteResult,
+    VosFacturesInvoiceResult,
+)
 from app.models.pharmacy import Pharmacy
 
 PROVIDER_KEY = "vosfactures"
@@ -31,11 +34,44 @@ def _parse_invoice_from_create_response(raw: Any) -> dict[str, Any] | None:
         return inv
     if raw.get("id") is not None and (
         raw.get("number") is not None
-        or raw.get("kind") in ("vat", "receipt", "proforma")
+        or raw.get("kind") in ("vat", "receipt", "proforma", "correction")
         or raw.get("status") is not None
     ):
         return raw
     return None
+
+
+def _parse_vf_decimal(val: Any) -> float | None:
+    """Interprète un montant renvoyé par VosFactures (nombre ou chaîne avec virgule)."""
+    if val is None:
+        return None
+    if isinstance(val, bool):
+        return None
+    if isinstance(val, (int, float)):
+        return float(val)
+    s = str(val).strip().replace(" ", "").replace("\u00a0", "").replace(",", ".")
+    if not s:
+        return None
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def totals_abs_from_vf_document(inv: dict[str, Any]) -> tuple[float | None, float | None, float | None]:
+    """(HT, TVA, TTC) en valeurs positives si les champs existent."""
+    ttc_raw = (
+        _parse_vf_decimal(inv.get("total_price_gross"))
+        or _parse_vf_decimal(inv.get("price_gross"))
+    )
+    ht = _parse_vf_decimal(inv.get("total_price_net"))
+    ttc = abs(ttc_raw) if ttc_raw is not None else None
+    if ht is not None:
+        ht = abs(ht)
+    vat = None
+    if ttc is not None and ht is not None:
+        vat = abs(ttc - ht)
+    return ht, vat, ttc
 
 
 class VosFacturesApiClient:
@@ -245,6 +281,150 @@ class VosFacturesApiClient:
             invoice_number=str(num) if num else None,
             payload=enriched,
         )
+
+    def issue_total_credit_note(
+        self,
+        *,
+        from_external_invoice_id: str,
+        correction_reason: str,
+    ) -> VosFacturesCreditNoteResult:
+        """Avoir total lié à une facture VosFactures (doc. API : copy_invoice_from + kind correction)."""
+        vid = str(from_external_invoice_id).strip()
+        if not vid:
+            raise ValueError("Identifiant facture VosFactures (source) manquant")
+        reason = (correction_reason or "").strip() or "Avoir"
+        inv: dict[str, Any] = {
+            "kind": "correction",
+            "total_correction": "1",
+            "correction_reason": reason,
+            "lang": "fr",
+        }
+        if vid.isdigit():
+            inv["copy_invoice_from"] = int(vid)
+        else:
+            inv["copy_invoice_from"] = vid
+        dept = vosfactures_department_id()
+        if dept is not None:
+            inv["department_id"] = dept
+        if vosfactures_test_documents():
+            inv["test"] = True
+        body = {"api_token": self._token, "invoice": inv}
+        raw = self._post_json(self._url_invoices(), body)
+        if isinstance(raw, dict) and raw.get("code") == "error":
+            raise ValueError(f"VosFactures : {raw.get('message', raw)}")
+        parsed = _parse_invoice_from_create_response(raw)
+        if not isinstance(parsed, dict):
+            raise ValueError(f"VosFactures : réponse inattendue {raw!r}")
+        ext_id = parsed.get("id")
+        num = parsed.get("number")
+        enriched = {
+            "vosfactures_response": raw,
+            "digestic_meta": {"correction_kind": "total", "from_external_invoice_id": vid},
+        }
+        return VosFacturesCreditNoteResult(
+            provider=PROVIDER_KEY,
+            external_id=str(ext_id) if ext_id is not None else None,
+            credit_note_number=str(num) if num else None,
+            payload=enriched,
+        )
+
+    def issue_partial_credit_note(
+        self,
+        *,
+        from_external_invoice_id: str,
+        correction_reason: str,
+        positions: list[dict[str, Any]],
+        lang: str = "fr",
+    ) -> VosFacturesCreditNoteResult:
+        """Avoir partiel (sans total_correction). Voir doc. API correction + positions avant/après."""
+        vid = str(from_external_invoice_id).strip()
+        if not vid:
+            raise ValueError("Identifiant facture VosFactures (source) manquant")
+        if not positions:
+            raise ValueError("Au moins une ligne de correction est requise.")
+        reason = (correction_reason or "").strip() or "Avoir partiel"
+
+        vf_id_txt = vid
+        inv: dict[str, Any] = {
+            "kind": "correction",
+            "correction_reason": reason,
+            "invoice_id": vf_id_txt,
+            "from_invoice_id": vf_id_txt,
+            "positions": positions,
+            "lang": (lang or "fr")[:4],
+        }
+
+        dept = vosfactures_department_id()
+        if dept is not None:
+            inv["department_id"] = dept
+        if vosfactures_test_documents():
+            inv["test"] = True
+
+        body = {"api_token": self._token, "invoice": inv}
+        raw = self._post_json(self._url_invoices(), body)
+        if isinstance(raw, dict) and raw.get("code") == "error":
+            raise ValueError(f"VosFactures : {raw.get('message', raw)}")
+        parsed = _parse_invoice_from_create_response(raw)
+        if not isinstance(parsed, dict):
+            raise ValueError(f"VosFactures : réponse inattendue {raw!r}")
+        ext_id = parsed.get("id")
+        num = parsed.get("number")
+        enriched = {
+            "vosfactures_response": raw,
+            "digestic_meta": {
+                "correction_kind": "partial",
+                "from_external_invoice_id": vf_id_txt,
+                "positions_preview": positions,
+            },
+        }
+        return VosFacturesCreditNoteResult(
+            provider=PROVIDER_KEY,
+            external_id=str(ext_id) if ext_id is not None else None,
+            credit_note_number=str(num) if num else None,
+            payload=enriched,
+        )
+
+    def register_invoice_payment(
+        self,
+        *,
+        vosfactures_invoice_id: str,
+        paid_date_iso: str,
+        price_ttc: float,
+        payment_name: str = "Encaissement Digestic",
+    ) -> dict[str, Any]:
+        """Enregistre un paiement lié à la facture VF (voir doc : POST banking/payments.json)."""
+        vid = str(vosfactures_invoice_id).strip()
+        if not vid:
+            raise ValueError("Identifiant facture VosFactures manquant")
+        date_chunk = str(paid_date_iso or "").strip()[:10]
+        if len(date_chunk) != 10 or date_chunk[4] != "-" or date_chunk[7] != "-":
+            raise ValueError("paid_date doit être au format YYYY-MM-DD.")
+
+        amt = round(float(price_ttc), 2)
+        if amt <= 0:
+            raise ValueError("Montant TTC doit être positif pour enregistrer le paiement VosFactures.")
+
+        invoice_id_field: Any = int(vid) if vid.isdigit() else vid
+
+        banking_payment: dict[str, Any] = {
+            "name": payment_name.strip() or "Encaissement Digestic",
+            "price": amt,
+            "invoice_id": invoice_id_field,
+            "paid": True,
+            "kind": "api",
+            "paid_date": date_chunk,
+            "currency": "EUR",
+        }
+        dept = vosfactures_department_id()
+        if dept is not None:
+            banking_payment["department_id"] = dept
+
+        body = {"api_token": self._token, "banking_payment": banking_payment}
+        url = f"https://{self._sub}.vosfactures.fr/banking/payments.json"
+        raw = self._post_json(url, body)
+        if isinstance(raw, dict) and raw.get("code") == "error":
+            raise ValueError(f"VosFactures : {raw.get('message', raw)}")
+        return raw if isinstance(raw, dict) else {"response": raw}
 
     def fetch_invoice_pdf(self, vosfactures_invoice_id: str) -> bytes:
         """GET /invoices/{id}.pdf — doc. officielle API VosFactures."""

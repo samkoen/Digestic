@@ -12,7 +12,7 @@ class Invoice:
     amount: float
     issue_date: str  # ISO format
     due_date: str  # ISO format
-    status: str = "pending"  # pending, paid, overdue, cancelled
+    status: str = "pending"  # pending, paid, overdue, cancelled, credited
     payment_date: Optional[str] = None
     sage_reference: Optional[str] = None  # Référence dans Sage (quand intégré)
     deposit_id: Optional[str] = None

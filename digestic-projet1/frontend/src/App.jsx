@@ -14,6 +14,7 @@ import Users from './pages/Users/Users'
 import DeliveryNotes from './pages/DeliveryNotes/DeliveryNotes'
 import Depots from './pages/Depots/Depots'
 import Products from './pages/Products/Products'
+import EmailTemplates from './pages/EmailTemplates/EmailTemplates'
 import { authService } from './services/authService'
 
 function PrivateRoute({ children, adminOnly = false }) {
@@ -98,6 +99,14 @@ function App() {
                   element={
                     <PrivateRoute adminOnly>
                       <Users />
+                    </PrivateRoute>
+                  }
+                />
+                <Route
+                  path="/email-templates"
+                  element={
+                    <PrivateRoute adminOnly>
+                      <EmailTemplates />
                     </PrivateRoute>
                   }
                 />

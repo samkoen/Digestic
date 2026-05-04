@@ -44,6 +44,7 @@ import {
   loadColumnWidthsPx,
   saveColumnWidthsPx,
 } from '../../utils/pharmacyTableLayoutUtils'
+import { useNotifier } from '../../hooks/useNotifier'
 
 const headerCellTextSx = { fontSize: '0.75rem', fontWeight: 600 }
 
@@ -88,6 +89,7 @@ function Pharmacies() {
   const tableWidthRef = useRef(1200)
   const colResizeObserverRef = useRef(null)
   const navigate = useNavigate()
+  const { notify, NotifierSnackbar } = useNotifier()
 
   const resizableOrder = useMemo(() => {
     if (tableView?.visibleColumnKeys?.length) {
@@ -421,12 +423,12 @@ function Pharmacies() {
         void loadData()
       } catch (error) {
         console.error('Erreur lors de la mise à jour de la date:', error)
-        alert('Erreur lors de la mise à jour de la date de prochaine visite')
+        notify('Erreur lors de la mise à jour de la date de prochaine visite', 'error')
         setEditingNextVisitId(null)
         setEditingNextVisitValue('')
       }
     },
-    [shouldSaveOnBlur, editingNextVisitValue, loadData],
+    [shouldSaveOnBlur, editingNextVisitValue, loadData, notify],
   )
 
   const handleNextVisitKeyDown = useCallback(
@@ -487,7 +489,7 @@ function Pharmacies() {
         void loadData()
       } catch (error) {
         console.error('Error deleting pharmacy:', error)
-        alert('Erreur lors de la suppression de la pharmacie')
+        notify('Erreur lors de la suppression de la pharmacie', 'error')
       }
     }
   }
@@ -549,7 +551,7 @@ function Pharmacies() {
       setColumnPickerOpen(false)
     } catch (e) {
       console.error(e)
-      alert(e?.response?.data?.error || e.message || 'Erreur de sauvegarde')
+      notify(e?.response?.data?.error || e.message || 'Erreur de sauvegarde', 'error')
     } finally {
       setSavingColumns(false)
     }
@@ -804,6 +806,7 @@ function Pharmacies() {
       </Box>
 
       <PharmacyForm open={openForm} onClose={handleFormClose} pharmacy={editingPharmacy} />
+      {NotifierSnackbar}
     </Box>
   )
 }

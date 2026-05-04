@@ -15,7 +15,7 @@ export const DELIVERY_NOTE_COLUMN_MIN_PX = {
   emailSent: 88,
 }
 
-export const DELIVERY_NOTE_TABLE_ACTIONS_PX = 168
+export const DELIVERY_NOTE_TABLE_ACTIONS_PX = 340
 
 /** Colonne case à cocher (sélection facturation groupée). */
 export const DELIVERY_NOTE_SELECT_COL_PX = 52

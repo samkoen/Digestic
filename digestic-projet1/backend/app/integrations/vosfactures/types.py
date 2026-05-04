@@ -14,3 +14,13 @@ class VosFacturesInvoiceResult:
     external_id: str | None
     invoice_number: str | None
     payload: dict[str, Any]
+
+
+@dataclass
+class VosFacturesCreditNoteResult:
+    """Résultat d'émission d'un avoir via VosFactures (document kind=correction)."""
+
+    provider: str
+    external_id: str | None
+    credit_note_number: str | None
+    payload: dict[str, Any]

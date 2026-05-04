@@ -26,6 +26,7 @@ import PeopleIcon from '@mui/icons-material/People'
 import LocalShippingIcon from '@mui/icons-material/LocalShipping'
 import WarehouseIcon from '@mui/icons-material/Warehouse'
 import Inventory2Icon from '@mui/icons-material/Inventory2'
+import MarkEmailUnreadIcon from '@mui/icons-material/MarkEmailUnread'
 import LogoutIcon from '@mui/icons-material/Logout'
 import { authService } from '../../services/authService'
 
@@ -72,6 +73,11 @@ function Layout({ children }) {
       baseItems.push({ text: 'Dépôts', icon: <WarehouseIcon />, path: '/depots' })
       baseItems.push({ text: 'Produits', icon: <Inventory2Icon />, path: '/products' })
       baseItems.push({ text: 'Commerciaux', icon: <PeopleIcon />, path: '/users' })
+      baseItems.push({
+        text: "Modèles d'e-mail",
+        icon: <MarkEmailUnreadIcon />,
+        path: '/email-templates',
+      })
     }
 
     return baseItems

@@ -16,8 +16,12 @@ import {
   DialogContent,
   DialogActions,
   MenuItem,
+  FormControl,
   FormControlLabel,
+  FormLabel,
   Checkbox,
+  Radio,
+  RadioGroup,
   Avatar,
   TextField,
   List,
@@ -31,6 +35,7 @@ import ReceiptIcon from '@mui/icons-material/Receipt'
 import AddIcon from '@mui/icons-material/Add'
 import CloseIcon from '@mui/icons-material/Close'
 import EditIcon from '@mui/icons-material/Edit'
+import LocalShippingOutlinedIcon from '@mui/icons-material/LocalShippingOutlined'
 import { format, parseISO } from 'date-fns'
 import { fr } from 'date-fns/locale'
 import { getPharmacyStatusLabel } from '../../constants/pharmacyStatus'
@@ -47,6 +52,7 @@ import { PAYMENT_MODES, DEFAULT_PAYMENT_MODE } from '../../constants/paymentMode
 import { WEEKS_UNTIL_RETURN_OPTIONS, validateVisitNotCompletedReason } from '../../constants/visitReportForm'
 import ResizableTextField from '../../components/ResizableTextField/ResizableTextField'
 import PharmacyForm from '../../components/PharmacyForm/PharmacyForm'
+import { deliveryNoteService } from '../../services/deliveryNoteService'
 
 /** Raccourcis : insertion dans le texte (curseur ou fin). */
 const COMMENT_EMOJI_SHORTCUTS = [
@@ -84,6 +90,13 @@ function PharmacyDetail() {
   const [reportDetailOpen, setReportDetailOpen] = useState(false)
   const [selectedReport, setSelectedReport] = useState(null)
   const [invoiceListOpen, setInvoiceListOpen] = useState(false)
+  const [standaloneBlOpen, setStandaloneBlOpen] = useState(false)
+  const [standaloneBlSaving, setStandaloneBlSaving] = useState(false)
+  const [standaloneDeliveryDate, setStandaloneDeliveryDate] = useState(() => format(new Date(), 'yyyy-MM-dd'))
+  const [standaloneBottles, setStandaloneBottles] = useState('1')
+  const [standaloneFreeUnits, setStandaloneFreeUnits] = useState('0')
+  /** auto | depot_vente | pending */
+  const [standaloneBlBillingMode, setStandaloneBlBillingMode] = useState('auto')
   const [invoiceDetailOpen, setInvoiceDetailOpen] = useState(false)
   const [selectedInvoice, setSelectedInvoice] = useState(null)
   const [newReportOpen, setNewReportOpen] = useState(false)
@@ -170,6 +183,53 @@ function PharmacyDetail() {
   const handleOpenNewReport = () => {
     resetReportForm()
     setNewReportOpen(true)
+  }
+
+  const openStandaloneBlDialog = () => {
+    setStandaloneDeliveryDate(format(new Date(), 'yyyy-MM-dd'))
+    setStandaloneBottles('1')
+    setStandaloneFreeUnits('0')
+    setStandaloneBlBillingMode('auto')
+    setStandaloneBlOpen(true)
+  }
+
+  const resolveCommercialForStandaloneBl = () => {
+    const planned = visits.filter((v) => v.status === 'planned')
+    return pharmacy?.commercial_id || planned[0]?.commercial_id || null
+  }
+
+  const handleStandaloneBlSubmit = async () => {
+    const commercialId = resolveCommercialForStandaloneBl()
+    if (!commercialId) {
+      alert(
+        "Attribuez un commercial à cette pharmacie ou planifiez une visite avec un commercial avant de créer un bon.",
+      )
+      return
+    }
+    const bc = Number.parseInt(String(standaloneBottles || '0'), 10) || 0
+    const fu = Number.parseInt(String(standaloneFreeUnits || '0'), 10) || 0
+    if (bc <= 0 && fu <= 0) {
+      alert('Indiquez au moins une bouteille ou une unité gratuite.')
+      return
+    }
+    setStandaloneBlSaving(true)
+    try {
+      const created = await deliveryNoteService.createStandalone({
+        pharmacy_id: id,
+        commercial_id: commercialId,
+        delivery_date: standaloneDeliveryDate,
+        bottles_count: bc,
+        free_units_quantity: fu,
+        bl_billing_mode: standaloneBlBillingMode,
+      })
+      await fetchData()
+      setStandaloneBlOpen(false)
+      alert(`Bon créé (${created.bl_number || created.id}).`)
+    } catch (error) {
+      alert(error.response?.data?.error || error.message || 'Erreur lors de la création du bon.')
+    } finally {
+      setStandaloneBlSaving(false)
+    }
   }
 
 
@@ -457,6 +517,13 @@ function PharmacyDetail() {
               <ReceiptIcon />
             </IconButton>
           </Tooltip>
+          {user?.role === 'admin' && (
+            <Tooltip title="Créer un bon sans rapport de visite">
+              <IconButton color="primary" onClick={openStandaloneBlDialog}>
+                <LocalShippingOutlinedIcon />
+              </IconButton>
+            </Tooltip>
+          )}
         </Box>
       </Box>
 
@@ -521,6 +588,10 @@ function PharmacyDetail() {
               <Typography>
                 <strong>Factures en retard:</strong>{' '}
                 {invoices.filter((inv) => inv.status === 'overdue').length}
+              </Typography>
+              <Typography>
+                <strong>Factures (avoir émis)&nbsp;:</strong>{' '}
+                {invoices.filter((inv) => inv.status === 'credited').length}
               </Typography>
               <Button
                 variant="outlined"
@@ -721,7 +792,97 @@ function PharmacyDetail() {
         }}
         invoice={selectedInvoice}
         pharmacyEmail={pharmacy?.pharmacist_email}
+        onCreditNotesChanged={() => void fetchData()}
+        onInvoicePatched={(inv) => {
+          setSelectedInvoice((prev) =>
+            prev && inv && String(prev.id) === String(inv.id) ? { ...prev, ...inv } : prev,
+          )
+        }}
       />
+
+      {/* BL sans rapport — admin */}
+      <Dialog
+        open={standaloneBlOpen}
+        onClose={() => !standaloneBlSaving && setStandaloneBlOpen(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Nouveau bon (sans rapport de visite)</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Même flux stock et catégorie de bon qu&apos;après une visite. Réservé aux administrateurs.
+          </Typography>
+          <Grid container spacing={2} sx={{ mt: 0.5 }}>
+            <Grid item xs={12}>
+              <TextField
+                fullWidth
+                type="date"
+                label="Date de livraison"
+                value={standaloneDeliveryDate}
+                onChange={(e) => setStandaloneDeliveryDate(e.target.value)}
+                InputLabelProps={{ shrink: true }}
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                type="number"
+                label="Bouteilles (payantes)"
+                inputProps={{ min: 0 }}
+                value={standaloneBottles}
+                onChange={(e) => setStandaloneBottles(e.target.value)}
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                type="number"
+                label="UG (gratuites)"
+                inputProps={{ min: 0 }}
+                value={standaloneFreeUnits}
+                onChange={(e) => setStandaloneFreeUnits(e.target.value)}
+              />
+            </Grid>
+            <Grid item xs={12}>
+              <FormControl component="fieldset" variant="standard">
+                <FormLabel component="legend">Type de bon</FormLabel>
+                <RadioGroup
+                  value={standaloneBlBillingMode}
+                  onChange={(e) => setStandaloneBlBillingMode(e.target.value)}
+                >
+                  <FormControlLabel
+                    value="auto"
+                    control={<Radio />}
+                    label="Selon le mode de paiement de la pharmacie (dépôt-vente si applicable)"
+                  />
+                  <FormControlLabel
+                    value="depot_vente"
+                    control={<Radio />}
+                    label="Dépôt-vente (non facturable tant que non validé)"
+                  />
+                  <FormControlLabel
+                    value="pending"
+                    control={<Radio />}
+                    label="Standard — en attente de facturation"
+                  />
+                </RadioGroup>
+              </FormControl>
+            </Grid>
+          </Grid>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setStandaloneBlOpen(false)} disabled={standaloneBlSaving}>
+            Annuler
+          </Button>
+          <Button
+            variant="contained"
+            onClick={() => void handleStandaloneBlSubmit()}
+            disabled={standaloneBlSaving}
+          >
+            {standaloneBlSaving ? 'Création…' : 'Créer le bon'}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Dialog open={photoDialogOpen} onClose={handlePhotoClose} maxWidth="lg" fullWidth>
         <DialogTitle sx={{ m: 0, p: 2 }}>

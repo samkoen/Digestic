@@ -6,9 +6,11 @@ const filterSx = { verticalAlign: 'top' }
 
 const STATUS_FILTER = [
   { value: '', label: 'Tous' },
+  { value: 'avoir', label: 'Avoir VF' },
   { value: 'pending', label: 'En attente' },
   { value: 'paid', label: 'Payé' },
   { value: 'overdue', label: 'En retard' },
+  { value: 'credited', label: 'Avoir émis' },
   { value: 'cancelled', label: 'Annulé' },
 ]
 

@@ -24,6 +24,7 @@ import AddIcon from '@mui/icons-material/Add'
 import EditIcon from '@mui/icons-material/Edit'
 import DeleteIcon from '@mui/icons-material/Delete'
 import { userService } from '../../services/userService'
+import { useNotifier } from '../../hooks/useNotifier'
 
 function Users() {
   const [users, setUsers] = useState([])
@@ -38,6 +39,8 @@ function Users() {
     phone: '',
     is_active: true,
   })
+
+  const { notify, NotifierSnackbar } = useNotifier()
 
   useEffect(() => {
     fetchUsers()
@@ -88,7 +91,7 @@ function Users() {
         fetchUsers()
       } catch (error) {
         console.error('Error deleting user:', error)
-        alert('Erreur lors de la suppression')
+        notify('Erreur lors de la suppression', 'error')
       }
     }
   }
@@ -105,7 +108,7 @@ function Users() {
       fetchUsers()
     } catch (error) {
       console.error('Error saving user:', error)
-      alert('Erreur lors de l\'enregistrement')
+      notify("Erreur lors de l'enregistrement", 'error')
     }
   }
 
@@ -270,6 +273,8 @@ function Users() {
           </DialogActions>
         </form>
       </Dialog>
+
+      {NotifierSnackbar}
     </Box>
   )
 }

@@ -1,8 +1,21 @@
 import React from 'react'
-import { Chip, Link, Typography, CircularProgress, IconButton, Tooltip, TableCell } from '@mui/material'
+import {
+  Chip,
+  Link,
+  Typography,
+  CircularProgress,
+  IconButton,
+  Tooltip,
+  TableCell,
+  Box,
+} from '@mui/material'
 import { Link as RouterLink } from 'react-router-dom'
 import DownloadIcon from '@mui/icons-material/Download'
+import EmailOutlinedIcon from '@mui/icons-material/EmailOutlined'
+import ReceiptLongIcon from '@mui/icons-material/ReceiptLong'
+import PaymentsIcon from '@mui/icons-material/Payments'
 import { AlignedTableCell } from '../ResizableTableColumns/ResizableHeaderCell'
+import InvoiceCreditNoteBadge from './InvoiceCreditNoteBadge'
 
 function getStatusColor(status) {
   const colors = {
@@ -10,14 +23,28 @@ function getStatusColor(status) {
     paid: 'success',
     overdue: 'error',
     cancelled: 'default',
+    credited: 'info',
+    avoir: 'secondary',
   }
   return colors[status] || 'default'
+}
+
+function getStatusLabel(status) {
+  const m = {
+    pending: 'En attente',
+    paid: 'Payée',
+    overdue: 'En retard',
+    cancelled: 'Annulée',
+    credited: 'Avoir émis',
+    avoir: 'Avoir VF',
+  }
+  return m[status] || status
 }
 
 /**
  * @param {object} p
  * @param {object} p.invoice — to_dict + pharmacy_name
- * @param {object} p.ctx — formatDate, canDownloadVosFacturesPdf, handleDownloadPdf, pdfLoadingId, navigateToPharmacy
+ * @param {object} p.ctx — formatDate, canDownloadVosFacturesPdf, canIssueTotalCreditNote, requestIssueCreditNote, handleDownloadPdf, pdfLoadingId, navigateToPharmacy, pharmacyMap, handleOpenInvoiceEmailComposer, invEmailBusyRowId, invEmailOpen
  */
 export function InvoiceTableBodyCell(p) {
   const { columnKey, invoice, fullWidths, ctx } = p
@@ -25,9 +52,24 @@ export function InvoiceTableBodyCell(p) {
   if (columnKey === 'invoiceNumber') {
     return (
       <AlignedTableCell width={w}>
-        <Typography variant="body2" noWrap title={invoice.invoice_number}>
-          {invoice.invoice_number}
-        </Typography>
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            minWidth: 0,
+          }}
+        >
+          <Typography
+            variant="body2"
+            noWrap
+            component="span"
+            sx={{ minWidth: 0 }}
+            title={invoice.invoice_number}
+          >
+            {invoice.invoice_number}
+          </Typography>
+          <InvoiceCreditNoteBadge show={Boolean(invoice.has_credit_notes)} />
+        </Box>
       </AlignedTableCell>
     )
   }
@@ -117,18 +159,46 @@ export function InvoiceTableBodyCell(p) {
     )
   }
   if (columnKey === 'status') {
+    const paid = String(invoice.status || '')
+      .toLowerCase()
+      .trim() === 'paid'
+    const pd = invoice.payment_date
     return (
       <AlignedTableCell width={w}>
-        <Chip label={invoice.status} color={getStatusColor(invoice.status)} size="small" />
+        <Box
+          sx={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'flex-start',
+            gap: 0.25,
+            minWidth: 0,
+          }}
+        >
+          <Chip
+            label={getStatusLabel(invoice.status)}
+            color={getStatusColor(invoice.status)}
+            size="small"
+          />
+          {paid && pd ? (
+            <Typography variant="caption" color="text.secondary" noWrap title={ctx.formatDate(pd)}>
+              Paiement {ctx.formatDate(pd)}
+            </Typography>
+          ) : null}
+        </Box>
       </AlignedTableCell>
     )
   }
   if (columnKey === 'daysOverdue') {
+    const st = String(invoice.status || '')
+      .toLowerCase()
+      .trim()
     const d = invoice.days_overdue
+    const credited = st === 'credited'
+    const paid = st === 'paid'
     return (
       <AlignedTableCell width={w}>
         <Typography variant="body2" noWrap>
-          {d > 0 ? `${d} j` : '—'}
+          {credited || paid ? '—' : d > 0 ? `${d} j` : '—'}
         </Typography>
       </AlignedTableCell>
     )
@@ -138,7 +208,21 @@ export function InvoiceTableBodyCell(p) {
 
 export function InvoiceActionsCell({ invoice, fullWidths, ctx }) {
   const w = fullWidths.actions
-  const ok = ctx.canDownloadVosFacturesPdf(invoice)
+  const isInvoice = invoice.row_kind !== 'credit_note'
+  const pharmMeta = ctx.pharmacyMap?.[invoice.pharmacy_id]
+  const mailOk =
+    isInvoice &&
+    !!(
+      String(pharmMeta?.pharmacist_email || '').trim() ||
+      String(pharmMeta?.email || '').trim()
+    )
+  const emailBusy = ctx.invEmailBusyRowId === invoice.id
+  const pdfOk = ctx.canDownloadVosFacturesPdf(invoice)
+  const avoirOk =
+    typeof ctx.canIssueTotalCreditNote === 'function' && ctx.canIssueTotalCreditNote(invoice)
+  const markPaidOk =
+    typeof ctx.canMarkInvoicePaid === 'function' && ctx.canMarkInvoicePaid(invoice)
+  const hasActions = pdfOk || avoirOk || markPaidOk || mailOk
   return (
     <TableCell
       align="right"
@@ -150,27 +234,86 @@ export function InvoiceActionsCell({ invoice, fullWidths, ctx }) {
         boxSizing: 'border-box',
         whiteSpace: 'nowrap',
         py: 0.5,
-        px: 1,
+        px: 0.5,
         fontSize: '0.75rem',
         fontWeight: 600,
       }}
+      onClick={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
     >
-      {ok ? (
-        <Tooltip title="Télécharger le PDF (VosFactures)">
-          <span>
-            <IconButton
-              size="small"
-              disabled={ctx.pdfLoadingId === invoice.id}
-              onClick={() => void ctx.handleDownloadPdf(invoice)}
-            >
-              {ctx.pdfLoadingId === invoice.id ? (
-                <CircularProgress color="inherit" size={22} />
-              ) : (
-                <DownloadIcon fontSize="small" />
-              )}
-            </IconButton>
-          </span>
-        </Tooltip>
+      {hasActions ? (
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'flex-end',
+            gap: 0.25,
+          }}
+        >
+          {pdfOk && (
+            <Tooltip title="Télécharger le PDF (VosFactures)">
+              <span>
+                <IconButton
+                  size="small"
+                  disabled={ctx.pdfLoadingId === invoice.id}
+                  onClick={() => void ctx.handleDownloadPdf(invoice)}
+                >
+                  {ctx.pdfLoadingId === invoice.id ? (
+                    <CircularProgress color="inherit" size={22} />
+                  ) : (
+                    <DownloadIcon fontSize="small" />
+                  )}
+                </IconButton>
+              </span>
+            </Tooltip>
+          )}
+          {mailOk && (
+            <Tooltip title="Préparer et envoyer la facture par e-mail (aperçu modifiable avant envoi)">
+              <span>
+                <IconButton
+                  size="small"
+                  color="primary"
+                  disabled={emailBusy || !!ctx.invEmailOpen}
+                  aria-label={`Envoyer la facture ${invoice.invoice_number} par e-mail`}
+                  onClick={() => void ctx.handleOpenInvoiceEmailComposer?.(invoice)}
+                >
+                  {emailBusy ? (
+                    <CircularProgress color="inherit" size={22} />
+                  ) : (
+                    <EmailOutlinedIcon fontSize="small" />
+                  )}
+                </IconButton>
+              </span>
+            </Tooltip>
+          )}
+          {markPaidOk && typeof ctx.requestMarkPaid === 'function' && (
+            <Tooltip title="Marquer comme payée (date de règlement)">
+              <span>
+                <IconButton
+                  size="small"
+                  color="success"
+                  aria-label={`Marquer comme payée ${invoice.invoice_number}`}
+                  onClick={() => ctx.requestMarkPaid(invoice)}
+                >
+                  <PaymentsIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
+          )}
+          {avoirOk && typeof ctx.requestIssueCreditNote === 'function' && (
+            <Tooltip title="Avoir VosFactures (total ou partiel)">
+              <span>
+                <IconButton
+                  size="small"
+                  aria-label={`Avoir pour la facture ${invoice.invoice_number}`}
+                  onClick={() => ctx.requestIssueCreditNote(invoice)}
+                >
+                  <ReceiptLongIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
+          )}
+        </Box>
       ) : (
         <Typography variant="caption" color="text.secondary">
           —

@@ -14,6 +14,7 @@ const BL_STATUS = [
   { value: 'fully_invoiced', label: 'Facturé' },
   { value: 'draft', label: 'Brouillon' },
   { value: 'depot-vente', label: 'Dépôt-vente' },
+  { value: 'cancelled', label: 'Annulé' },
 ]
 
 const YES_NO = [

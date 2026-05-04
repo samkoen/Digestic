@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Dialog,
   DialogTitle,
@@ -17,6 +18,7 @@ import {
   Paper,
 } from '@mui/material'
 import CloseIcon from '@mui/icons-material/Close'
+import InvoiceCreditNoteBadge from '../InvoiceTable/InvoiceCreditNoteBadge'
 import { format } from 'date-fns'
 import { invoiceService } from '../../services/invoiceService'
 import { deliveryNoteService } from '../../services/deliveryNoteService'
@@ -60,12 +62,14 @@ function getStatusChipProps(status) {
     pending: 'En attente',
     overdue: 'En retard',
     cancelled: 'Annulée',
+    credited: 'Avoir émis',
   }
   const colors = {
     paid: 'success',
     pending: 'warning',
     overdue: 'error',
     cancelled: 'default',
+    credited: 'info',
   }
   return {
     label: labels[status] || status,
@@ -73,11 +77,45 @@ function getStatusChipProps(status) {
   }
 }
 
-function isPendingInvoiceableBl(note) {
-  return note.status === 'pending' && (note.bottles_count || 0) >= 1
+/** Bons à afficher dans la modale : en attente (≥1 btl) ou tout dépôt-vente en attente de validation. */
+function isBonEnAttenteOuDepotVente(note) {
+  const st = note.status
+  if (st === 'depot-vente') return true
+  const qty = note.bottles_count || 0
+  return st === 'pending' && qty >= 1
 }
 
+function blChipForPharmacyPendingModal(note) {
+  if (note.status === 'depot-vente') {
+    return { label: 'Dépôt-vente', color: 'secondary' }
+  }
+  return { label: 'Bon en attente', color: 'warning' }
+}
+
+function dateToSortMs(raw) {
+  if (!raw) return 0
+  const t = new Date(raw).getTime()
+  return Number.isFinite(t) ? t : 0
+}
+
+/** Liste Factures : URL avec filtres pour centrer la ligne pertinente. */
+function invoiceRowToFacturesSearchPath(inv) {
+  const parts = []
+  const depositId = (inv.deposit_id || '').trim()
+  const pharmacyId = (inv.pharmacy_id || '').trim()
+  const num = (inv.invoice_number || '').trim()
+  if (depositId) parts.push(`deposit_id=${encodeURIComponent(depositId)}`)
+  else if (pharmacyId) parts.push(`pharmacy_id=${encodeURIComponent(pharmacyId)}`)
+  if (num) parts.push(`invoice_number=${encodeURIComponent(num)}`)
+  if (!parts.length) return '/invoices'
+  return `/invoices?${parts.join('&')}`
+}
+
+const INVOICE_SINGLE_CLICK_DELAY_MS = 260
+
 function InvoiceList({ open, onClose, pharmacyId, onSelectInvoice, pharmacyEmail, pharmacyReduction }) {
+  const navigate = useNavigate()
+  const invoiceSingleClickTimerRef = useRef(null)
   const [invoices, setInvoices] = useState([])
   const [loadingInvoices, setLoadingInvoices] = useState(true)
   const [deliveryNotes, setDeliveryNotes] = useState([])
@@ -147,11 +185,11 @@ function InvoiceList({ open, onClose, pharmacyId, onSelectInvoice, pharmacyEmail
 
   const unifiedRows = useMemo(() => {
     const pendingBls = deliveryNotes
-      .filter(isPendingInvoiceableBl)
-      .sort((a, b) => new Date(b.delivery_date || 0) - new Date(a.delivery_date || 0))
+      .filter(isBonEnAttenteOuDepotVente)
+      .sort((a, b) => dateToSortMs(b.delivery_date) - dateToSortMs(a.delivery_date))
 
     const invSorted = [...invoices].sort(
-      (a, b) => new Date(b.issue_date || 0) - new Date(a.issue_date || 0),
+      (a, b) => dateToSortMs(b.issue_date) - dateToSortMs(a.issue_date),
     )
 
     const out = []
@@ -163,6 +201,64 @@ function InvoiceList({ open, onClose, pharmacyId, onSelectInvoice, pharmacyEmail
     }
     return out
   }, [deliveryNotes, invoices])
+
+  const clearInvoiceClickTimer = useCallback(() => {
+    if (invoiceSingleClickTimerRef.current != null) {
+      clearTimeout(invoiceSingleClickTimerRef.current)
+      invoiceSingleClickTimerRef.current = null
+    }
+  }, [])
+
+  useEffect(
+    () => () => clearInvoiceClickTimer(),
+    [clearInvoiceClickTimer],
+  )
+
+  useEffect(() => {
+    if (!open) {
+      clearInvoiceClickTimer()
+    }
+  }, [open, clearInvoiceClickTimer])
+
+  const openBonLivraisonPage = useCallback(
+    (note) => {
+      const id = (note?.id || '').trim()
+      if (!id) return
+      navigate(`/delivery-notes?deposit_id=${encodeURIComponent(id)}`)
+      onClose?.()
+    },
+    [navigate, onClose],
+  )
+
+  const openFacturesPageForInvoice = useCallback(
+    (inv) => {
+      navigate(invoiceRowToFacturesSearchPath(inv))
+      onClose?.()
+    },
+    [navigate, onClose],
+  )
+
+  const handleInvoiceRowClick = useCallback(
+    (inv) => (e) => {
+      if (!onSelectInvoice) return
+      if (e.detail > 1) return
+      clearInvoiceClickTimer()
+      invoiceSingleClickTimerRef.current = setTimeout(() => {
+        invoiceSingleClickTimerRef.current = null
+        onSelectInvoice(inv)
+      }, INVOICE_SINGLE_CLICK_DELAY_MS)
+    },
+    [onSelectInvoice, clearInvoiceClickTimer],
+  )
+
+  const handleInvoiceRowDoubleClick = useCallback(
+    (inv) => (e) => {
+      e.preventDefault()
+      clearInvoiceClickTimer()
+      openFacturesPageForInvoice(inv)
+    },
+    [clearInvoiceClickTimer, openFacturesPageForInvoice],
+  )
 
   const loading = loadingInvoices || loadingBl
 
@@ -186,9 +282,16 @@ function InvoiceList({ open, onClose, pharmacyId, onSelectInvoice, pharmacyEmail
           </Typography>
         )}
         <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
-          Les bons avec statut «&nbsp;en attente&nbsp;» sont listés en tête ; les lignes&nbsp;BL affichent un montant{' '}
-          <strong>indicatif</strong> (réduction pharmacie&nbsp;{(Number.isFinite(rpct) ? rpct : 0).toFixed(2)}
-          %) si disponible.
+          Les <strong>bons</strong> (<em>en attente</em> avec au moins une bouteille, ou tout bon en{' '}
+          <em>dépôt-vente</em>) sont listés en premier (date de livraison, du plus récent au plus ancien), puis les{' '}
+          <strong>factures</strong> (date d&apos;émission, même ordre). Montants BL{' '}
+          <strong>indicatifs</strong> — réduction pharmacie&nbsp;{(Number.isFinite(rpct) ? rpct : 0).toFixed(2)}
+          %.
+        </Typography>
+        <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
+          <strong>Double-clic</strong> sur une ligne ouvre la page <strong>Bons de livraison</strong> ou{' '}
+          <strong>Factures</strong> préfiltrée sur ce document ; un clic simple sur une facture ouvre
+          l&apos;aperçu local.
         </Typography>
 
         {loading ? (
@@ -197,7 +300,7 @@ function InvoiceList({ open, onClose, pharmacyId, onSelectInvoice, pharmacyEmail
           </Box>
         ) : unifiedRows.length === 0 ? (
           <Typography variant="body2" color="text.secondary" sx={{ py: 3 }}>
-            Aucune facture ni bon «&nbsp;en attente&nbsp;» pour cette pharmacie.
+            Aucune facture ni bon (en attente, dépôt-vente avec bouteilles, etc.) pour cette pharmacie.
           </Typography>
         ) : (
           <TableContainer component={Paper} variant="outlined" sx={{ maxHeight: 480 }}>
@@ -228,14 +331,26 @@ function InvoiceList({ open, onClose, pharmacyId, onSelectInvoice, pharmacyEmail
                       indicativeInvoiceTotals(note.bottles_count, billingProduct, rpct)
                     const remise =
                       Number.isFinite(rpct) && rpct > 0 ? `${rpct}% (pharmacie)` : '—'
+                    const blChip = blChipForPharmacyPendingModal(note)
                     return (
-                      <TableRow key={row.key} hover sx={{ bgcolor: 'action.hover' }}>
+                      <TableRow
+                        key={row.key}
+                        hover
+                        onDoubleClick={(e) => {
+                          e.stopPropagation()
+                          openBonLivraisonPage(note)
+                        }}
+                        sx={{
+                          bgcolor: 'action.hover',
+                          cursor: 'pointer',
+                        }}
+                      >
                         <TableCell sx={{ whiteSpace: 'nowrap', fontFamily: 'monospace', fontSize: '0.8rem' }}>
                           {note.bl_number || 'BL'}
                         </TableCell>
                         <TableCell>{formatIssueDate(note.delivery_date)}</TableCell>
                         <TableCell>
-                          <Chip label="Bon en attente" color="warning" size="small" />
+                          <Chip label={blChip.label} color={blChip.color} size="small" />
                         </TableCell>
                         <TableCell align="right">{note.bottles_count ?? 0}</TableCell>
                         <TableCell>{remise}</TableCell>
@@ -260,16 +375,26 @@ function InvoiceList({ open, onClose, pharmacyId, onSelectInvoice, pharmacyEmail
                     <TableRow
                       key={row.key}
                       hover
-                      onClick={() => onSelectInvoice?.(inv)}
+                      {...(onSelectInvoice ? { onClick: handleInvoiceRowClick(inv) } : {})}
+                      onDoubleClick={handleInvoiceRowDoubleClick(inv)}
                       sx={{
-                        cursor: onSelectInvoice ? 'pointer' : 'default',
+                        cursor: 'pointer',
                         '&:last-child td': { borderBottom: 0 },
                       }}
                     >
                       <TableCell sx={{ whiteSpace: 'nowrap' }}>
-                        <Typography variant="body2" fontWeight="medium">
-                          {inv.invoice_number}
-                        </Typography>
+                        <Box sx={{ display: 'flex', alignItems: 'center', minWidth: 0 }}>
+                          <Typography
+                            variant="body2"
+                            fontWeight="medium"
+                            component="span"
+                            noWrap
+                            sx={{ minWidth: 0 }}
+                          >
+                            {inv.invoice_number}
+                          </Typography>
+                          <InvoiceCreditNoteBadge show={Boolean(inv.has_credit_notes)} />
+                        </Box>
                         {inv.deposit_bl_number ? (
                           <Typography variant="caption" color="text.secondary">
                             BL {inv.deposit_bl_number}
@@ -279,7 +404,9 @@ function InvoiceList({ open, onClose, pharmacyId, onSelectInvoice, pharmacyEmail
                       <TableCell>{formatIssueDate(inv.issue_date)}</TableCell>
                       <TableCell>
                         <Chip label={st.label} color={st.color} size="small" />
-                        {inv.status !== 'paid' && inv.days_overdue > 0 ? (
+                        {inv.status !== 'paid' &&
+                        inv.status !== 'credited' &&
+                        inv.days_overdue > 0 ? (
                           <Typography variant="caption" color="error" display="block">
                             Retard&nbsp;: {inv.days_overdue}&nbsp;j
                           </Typography>

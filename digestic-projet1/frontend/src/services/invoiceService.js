@@ -21,6 +21,15 @@ export async function fetchInvoicesPage(params = {}) {
 
 export const invoiceService = {
   /**
+   * Lignes de facture utilisables pour composer un avoir partiel (quantités restantes).
+   * @returns {Promise<object[]>}
+   */
+  getLinesForCredit: async (id) => {
+    const { data } = await api.get(`/invoices/${id}/lines-for-credit`)
+    return Array.isArray(data) ? data : []
+  },
+
+  /**
    * Liste paginée (GET avec `page` — réponse { items, total, … }).
    */
   getList: fetchInvoicesPage,
@@ -47,6 +56,31 @@ export const invoiceService = {
   getOverdue: async (days = 30) => {
     const response = await api.get('/invoices', { params: { overdue: true, days } })
     return response.data
+  },
+
+  /**
+   * Marque la facture comme payée (date de règlement, défaut côté serveur = aujourd’hui).
+   * @param {string} id
+   * @param {{ payment_date?: string, local_only?: boolean }} [payload] — `local_only` : sans sync VosFactures
+   */
+  markPaid: async (id, payload = {}) => {
+    const { data } = await api.post(`/invoices/${id}/mark-paid`, payload)
+    return data
+  },
+
+  /** Brouillon pour envoi facture (modèle HTML admin). */
+  getEmailDraft: async (id) => {
+    const { data } = await api.get(`/invoices/${id}/email-draft`)
+    return data
+  },
+
+  /** Envoi facture après prévisualisation / édition du message. */
+  sendEmail: async (id, { subject, body_html }) => {
+    const { data } = await api.post(`/invoices/${id}/send-email`, {
+      subject,
+      body_html,
+    })
+    return data
   },
 
   /**

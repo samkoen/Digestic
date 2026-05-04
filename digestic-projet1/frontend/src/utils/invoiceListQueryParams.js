@@ -50,6 +50,21 @@ export function parseDepositFilterFromSearchParams(sp) {
   return { depositId: did }
 }
 
+/**
+ * @param {URLSearchParams} sp
+ * @returns {{ invoiceNumber: string } | null}
+ */
+export function parseInvoiceNumberFilterFromSearchParams(sp) {
+  if (!sp) {
+    return null
+  }
+  const n = (sp.get('invoice_number') || sp.get('invoiceNumber') || '').trim()
+  if (!n) {
+    return null
+  }
+  return { invoiceNumber: n }
+}
+
 /** État initial filtres (window) pour premier GET aligné sur l’URL. */
 export function getInitialInvoiceFiltersState() {
   const base = { ...EMPTY_INVOICE_FILTERS, overdueOnly: false }
@@ -59,10 +74,11 @@ export function getInitialInvoiceFiltersState() {
   const sp = new URLSearchParams(window.location.search)
   const extraP = parsePharmacyFilterFromSearchParams(sp)
   const extraD = parseDepositFilterFromSearchParams(sp)
-  if (!extraP && !extraD) {
+  const extraN = parseInvoiceNumberFilterFromSearchParams(sp)
+  if (!extraP && !extraD && !extraN) {
     return base
   }
-  return { ...base, ...(extraP || {}), ...(extraD || {}) }
+  return { ...base, ...(extraP || {}), ...(extraD || {}), ...(extraN || {}) }
 }
 
 export function invoiceFiltersFromPayload(raw) {

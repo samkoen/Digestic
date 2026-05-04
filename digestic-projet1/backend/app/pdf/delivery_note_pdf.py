@@ -236,6 +236,11 @@ def build_delivery_note_pdf(db: Session, note_id: str) -> tuple[bytes, str] | No
     if not dep:
         return None
 
+    if (dep.status or "").strip().lower() == "cancelled":
+        raise ValueError(
+            "Ce bon de livraison a été annulé ; aucun PDF n'est émis pour des raisons légales / de traçabilité."
+        )
+
     ph = db.get(orm.Pharmacy, dep.pharmacy_id)
     if not ph:
         return None
@@ -272,6 +277,9 @@ def build_delivery_note_pdf(db: Session, note_id: str) -> tuple[bytes, str] | No
     total_ttc = round(total_ht + total_vat, 2)
 
     pay_mode = (ph.payment_mode or "").strip() or "selon conditions convenues"
+
+    st = (dep.status or "").strip().lower()
+    show_depot_vente_banner = st == "depot-vente"
 
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -317,8 +325,12 @@ def build_delivery_note_pdf(db: Session, note_id: str) -> tuple[bytes, str] | No
         Spacer(1, 4 * mm),
         hdr_inner,
         Spacer(1, 5 * mm),
-        Paragraph("DEPOT VENTE", subtitle_st),
-        Spacer(1, 2 * mm),
+    ]
+    if show_depot_vente_banner:
+        story.append(Paragraph("DEPOT VENTE", subtitle_st))
+        story.append(Spacer(1, 2 * mm))
+    story.extend(
+        [
         Paragraph(
             escape(f"Bon de livraison N° {doc_title_num}"),
             title_st,
@@ -327,7 +339,8 @@ def build_delivery_note_pdf(db: Session, note_id: str) -> tuple[bytes, str] | No
         Spacer(1, 3 * mm),
         Paragraph(escape("N° intracommunautaire"), small_st),
         Spacer(1, 4 * mm),
-    ]
+        ]
+    )
 
     livraison_r = escape(f"Livraison Num : {bl}     Du : {date_str}")
     liv_box = Table([[Paragraph(livraison_r, small_st)]], colWidths=[doc.width])

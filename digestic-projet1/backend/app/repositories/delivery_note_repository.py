@@ -112,8 +112,14 @@ class DeliveryNoteRepository:
         )
         conds: list = []
         if not include_archived:
-            # BL facturés : bottles_count=0 mais statut fully_invoiced — ils doivent rester visibles.
-            conds.append(or_(d.bottles_count > 0, d.status == "fully_invoiced"))
+            # BL sans quantité mais statut métier pertinent (facturé, ou annulé pour traçabilité).
+            conds.append(
+                or_(
+                    d.bottles_count > 0,
+                    d.status == "fully_invoiced",
+                    d.status == "cancelled",
+                )
+            )
 
         pids = _parse_uuid_list(pharmacy_ids)
         if pids:
@@ -200,6 +206,7 @@ class DeliveryNoteRepository:
                 or_(
                     orm.Deposit.bottles_count > 0,
                     orm.Deposit.status == "fully_invoiced",
+                    orm.Deposit.status == "cancelled",
                 )
             )
         ).scalars().all()
@@ -226,6 +233,7 @@ class DeliveryNoteRepository:
             or_(
                 orm.Deposit.bottles_count > 0,
                 orm.Deposit.status == "fully_invoiced",
+                orm.Deposit.status == "cancelled",
             )
         )
         rows = self._db.execute(q).scalars().all()
@@ -260,9 +268,10 @@ class DeliveryNoteRepository:
                 email_at = datetime.fromisoformat(model.email_sent_at.replace("Z", "+00:00"))
             except ValueError:
                 email_at = None
+        vid = mp.parse_uuid(model.visit_report_id) if model.visit_report_id else None
         row = orm.Deposit(
             id=mp.parse_uuid(model.id) if model.id else uuid.uuid4(),
-            visit_report_id=mp.parse_uuid(model.visit_report_id),
+            visit_report_id=vid,
             pharmacy_id=mp.parse_uuid(model.pharmacy_id),
             warehouse_id=wh,
             commercial_id=mp.parse_uuid(model.commercial_id),
@@ -291,7 +300,7 @@ class DeliveryNoteRepository:
         row = self._db.get(orm.Deposit, did)
         if not row:
             return None
-        row.visit_report_id = mp.parse_uuid(model.visit_report_id)
+        row.visit_report_id = mp.parse_uuid(model.visit_report_id) if model.visit_report_id else None
         row.pharmacy_id = mp.parse_uuid(model.pharmacy_id)
         row.warehouse_id = self._resolve_warehouse(model.pharmacy_id)
         row.commercial_id = mp.parse_uuid(model.commercial_id)

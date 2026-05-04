@@ -139,3 +139,43 @@ def apply_return_from_pharmacy(
             created_by=user_id,
         )
     )
+
+
+def reverse_bl_deposit_shipment(
+    db: Session,
+    *,
+    warehouse_id: uuid.UUID,
+    pharmacy_id: uuid.UUID,
+    product_id: uuid.UUID,
+    quantity: int,
+    deposit_id: uuid.UUID,
+    user_id: uuid.UUID | None,
+) -> None:
+    """Inverse un envoi BL (apply_deposit_to_pharmacy) : retour physique au dépôt."""
+    if quantity <= 0:
+        return
+    bal = _ensure_pharmacy_balance_row(db, pharmacy_id, product_id)
+    if bal.quantity_deposited < quantity:
+        raise ValueError(
+            "Solde déposé en pharmacie insuffisant pour annuler ce bon "
+            f"({bal.quantity_deposited} en stock pharmacie dépôt pour ce produit, "
+            f"annulation demandée : {quantity}). Vérifiez les autres mouvements ou facturations."
+        )
+    bal.quantity_deposited -= quantity
+    ws = _ensure_warehouse_stock_row(db, warehouse_id, product_id)
+    ws.quantity += quantity
+    wh = db.get(orm.Warehouse, warehouse_id)
+    if wh is not None:
+        wh.quantity = int(wh.quantity) + quantity
+    db.add(
+        orm.StockMovement(
+            movement_type="bl_cancelled",
+            warehouse_id=warehouse_id,
+            pharmacy_id=pharmacy_id,
+            product_id=product_id,
+            quantity=quantity,
+            ref_table="deposits",
+            ref_id=deposit_id,
+            created_by=user_id,
+        )
+    )

@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Any, List, Optional
 
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 import app.db.models as orm
+from app.core.payment_modes import is_depot_vente
 from app.db import mappers as mp
+from app.domain.billing.delivery_note_number import new_digestic_bl_number
 from app.domain.billing.due_date import due_date_for_invoice
 from app.domain.billing.pharmacy_reduction import (
     normalize_pharmacy_reduction_pct,
@@ -21,6 +24,9 @@ from app.repositories.delivery_note_repository import DeliveryNoteRepository
 from app.repositories.invoice_repository import InvoiceRepository
 from app.repositories.pharmacy_repository import PharmacyRepository
 from app.repositories.product_repository import get_default_billing_product_row
+from app.domain.pharmacy_notification_email import notification_email_for_pharmacy
+from app.services.billing_stock_service import apply_deposit_to_pharmacy, reverse_bl_deposit_shipment
+from app.services.email_service import EmailService
 
 
 class DeliveryNoteService:
@@ -46,9 +52,242 @@ class DeliveryNoteService:
 
     def create_delivery_note(self, note_data: dict) -> DeliveryNote:
         note_data = dict(note_data)
+        vid = note_data.get("visit_report_id")
+        if vid is None or not str(vid).strip():
+            raise ValueError("visit_report_id est obligatoire pour créer un bon de livraison.")
         note_data["id"] = str(uuid.uuid4())
         note = DeliveryNote.from_dict(note_data)
         return self.repository.create(note)
+
+    def create_standalone_delivery_note_admin(self, payload: dict[str, Any]) -> DeliveryNote:
+        """Bon sans rapport : réservé admin (route dédiée), même logique stock que après rapport."""
+        pharmacy_id = str(payload.get("pharmacy_id") or "").strip()
+        if not pharmacy_id:
+            raise ValueError("pharmacy_id est obligatoire.")
+
+        dd_raw = payload.get("delivery_date")
+        if not dd_raw or not str(dd_raw).strip():
+            raise ValueError("delivery_date est obligatoire.")
+        dday = mp.parse_date(str(dd_raw).strip())
+        delivery_date_iso = dday.isoformat()
+
+        def _nz_int(raw: Any) -> int:
+            if raw is None or isinstance(raw, bool):
+                return 0
+            try:
+                return max(0, int(raw))
+            except (TypeError, ValueError):
+                try:
+                    return max(0, int(float(raw)))
+                except (TypeError, ValueError):
+                    return 0
+
+        bottles = _nz_int(payload.get("bottles_count"))
+        free_units = _nz_int(payload.get("free_units_quantity"))
+        if bottles <= 0 and free_units <= 0:
+            raise ValueError(
+                "Indiquez au moins une bouteille facturable ou une unité gratuite (UG)."
+            )
+
+        pharmacy = self._pharm_repo.find_by_id(pharmacy_id)
+        if not pharmacy:
+            raise ValueError("Pharmacie introuvable.")
+
+        comm_raw = str(payload.get("commercial_id") or "").strip()
+        commercial_id = comm_raw or str(pharmacy.commercial_id or "").strip()
+        if not commercial_id:
+            raise ValueError(
+                "Attribuez un commercial à cette pharmacie (ou indiquez commercial_id)."
+            )
+
+        mode = str(payload.get("bl_billing_mode") or "auto").strip().lower().replace("-", "_")
+        if mode in ("automatic", ""):
+            mode = "auto"
+        if mode not in ("auto", "depot_vente", "pending"):
+            mode = "auto"
+        if mode == "depot_vente":
+            depot_vente_flow = True
+        elif mode == "pending":
+            depot_vente_flow = False
+        else:
+            depot_vente_flow = is_depot_vente(pharmacy.payment_mode)
+
+        bl_status = "depot-vente" if depot_vente_flow else "pending"
+
+        product_row = get_default_billing_product_row(self._db)
+        if not product_row:
+            raise ValueError(
+                "Aucun produit actif en base : impossible d'appliquer le flux stock."
+            )
+        pid = product_row.id
+        uid = mp.parse_uuid(commercial_id)
+
+        dn = DeliveryNote(
+            id=str(uuid.uuid4()),
+            pharmacy_id=pharmacy_id,
+            commercial_id=commercial_id,
+            delivery_date=delivery_date_iso,
+            bottles_count=bottles,
+            free_units_quantity=free_units,
+            is_deposit_sale=depot_vente_flow,
+            status=bl_status,
+            bl_number=new_digestic_bl_number(for_date=dday),
+            email_sent=False,
+            visit_report_id=None,
+        )
+        saved_dn = self.repository.create(dn)
+        deposit_orm = self._db.get(orm.Deposit, mp.parse_uuid(saved_dn.id))
+        if deposit_orm is None:
+            raise RuntimeError("Dépôt non retrouvé après création")
+
+        if bottles > 0:
+            self._db.add(
+                orm.DepositLine(
+                    deposit_id=deposit_orm.id,
+                    product_id=pid,
+                    quantity=bottles,
+                )
+            )
+            self._db.flush()
+
+        ship_total = bottles + free_units
+        if ship_total > 0:
+            apply_deposit_to_pharmacy(
+                self._db,
+                warehouse_id=deposit_orm.warehouse_id,
+                pharmacy_id=mp.parse_uuid(pharmacy_id),
+                product_id=pid,
+                quantity=ship_total,
+                deposit_id=deposit_orm.id,
+                user_id=uid,
+            )
+
+        deposit_orm.status = bl_status
+        deposit_orm.validated_at = datetime.now(timezone.utc)
+        self._db.flush()
+        return mp.deposit_orm_to_note(deposit_orm)
+
+    def cancel_delivery_note_admin(self, note_id: str, admin_user_id: str) -> DeliveryNote:
+        """Annule un BL non facturé : statut « cancelled », retour stock si des quantités avaient été expédiées."""
+        raw = str(note_id or "").strip()
+        try:
+            did = mp.parse_uuid(raw)
+        except ValueError:
+            raise ValueError("Identifiant de bon invalide.") from None
+
+        dep = self._db.get(orm.Deposit, did)
+        if not dep:
+            raise ValueError("Bon de livraison introuvable.")
+
+        st = (dep.status or "").strip().lower()
+        if st == "cancelled":
+            raise ValueError("Ce bon est déjà annulé.")
+        if st == "fully_invoiced":
+            raise ValueError("Impossible d'annuler un bon déjà entièrement facturé.")
+
+        linked = (
+            self._db.scalar(select(func.count()).select_from(orm.Invoice).where(orm.Invoice.deposit_id == did))
+            or 0
+        )
+        if int(linked) > 0:
+            raise ValueError(
+                "Impossible d'annuler ce bon : une ou plusieurs factures y sont encore liées. "
+                "Utilisez une procédure d'avoir ou de correction sur la ou les factures."
+            )
+
+        cancellable = {"pending", "depot-vente", "sent", "confirmed", "draft"}
+        if st not in cancellable:
+            raise ValueError(
+                f"Annulation impossible pour le statut « {dep.status} ». Si le flux doit évoluer, contactez un admin."
+            )
+
+        qty = int(dep.bottles_count or 0) + int(dep.free_units_quantity or 0)
+        product_row = get_default_billing_product_row(self._db)
+        if not product_row:
+            raise ValueError("Aucun produit actif en base.")
+
+        uid_admin = mp.parse_uuid(admin_user_id)
+
+        if qty > 0:
+            reverse_bl_deposit_shipment(
+                self._db,
+                warehouse_id=dep.warehouse_id,
+                pharmacy_id=dep.pharmacy_id,
+                product_id=product_row.id,
+                quantity=qty,
+                deposit_id=dep.id,
+                user_id=uid_admin,
+            )
+
+        for line in list(dep.lines):
+            self._db.delete(line)
+        dep.status = "cancelled"
+        dep.bottles_count = 0
+        dep.free_units_quantity = 0
+        self._db.flush()
+        return mp.deposit_orm_to_note(dep)
+
+    def replace_delivery_note_with_rectified_admin(
+        self,
+        source_note_id: str,
+        admin_user_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Annule un bon puis en crée un autre dans la même transaction (bon rectificatif). Admin uniquement."""
+        raw = str(source_note_id or "").strip()
+        try:
+            did = mp.parse_uuid(raw)
+        except ValueError:
+            raise ValueError("Identifiant de bon invalide.") from None
+
+        dep = self._db.get(orm.Deposit, did)
+        if not dep:
+            raise ValueError("Bon de livraison introuvable.")
+
+        pharmacy_id = str(dep.pharmacy_id)
+        commercial_id_src = str(dep.commercial_id)
+        prev_bl = (dep.bl_number or "").strip() or None
+
+        pl = dict(payload)
+        dd_raw = pl.get("delivery_date")
+        if not dd_raw or not str(dd_raw).strip():
+            raise ValueError("delivery_date est obligatoire pour le bon rectificatif.")
+
+        def _nz(raw: Any) -> int:
+            if raw is None or isinstance(raw, bool):
+                return 0
+            try:
+                return max(0, int(raw))
+            except (TypeError, ValueError):
+                try:
+                    return max(0, int(float(raw)))
+                except (TypeError, ValueError):
+                    return 0
+
+        bottles = _nz(pl.get("bottles_count"))
+        free_u = _nz(pl.get("free_units_quantity"))
+        if bottles <= 0 and free_u <= 0:
+            raise ValueError(
+                "Indiquez au moins une bouteille facturable ou une unité gratuite pour le nouveau bon."
+            )
+
+        comm = str(pl.get("commercial_id") or "").strip() or commercial_id_src
+
+        self.cancel_delivery_note_admin(source_note_id, admin_user_id)
+
+        merged: dict[str, Any] = {
+            "pharmacy_id": pharmacy_id,
+            "commercial_id": comm,
+            "delivery_date": str(dd_raw).strip(),
+            "bottles_count": bottles,
+            "free_units_quantity": free_u,
+            "bl_billing_mode": pl.get("bl_billing_mode", "auto"),
+        }
+        new_note = self.create_standalone_delivery_note_admin(merged)
+        out = dict(new_note.to_dict())
+        out["replaced_deposit_id"] = raw
+        out["replaced_bl_number"] = prev_bl
+        return out
 
     def update_delivery_note(self, note_id: str, note_data: dict) -> Optional[DeliveryNote]:
         existing = self.repository.find_by_id(note_id)
@@ -67,6 +306,8 @@ class DeliveryNoteService:
         existing = self.repository.find_by_id(note_id)
         if not existing:
             return None
+        if (existing.status or "").strip().lower() == "cancelled":
+            raise ValueError("Ce bon est annulé ; impossible de le marquer comme envoyé.")
         payload = {
             "email_sent": True,
             "email_sent_at": datetime.now().isoformat(),
@@ -76,11 +317,86 @@ class DeliveryNoteService:
             payload["status"] = "sent"
         return self.update_delivery_note(note_id, payload)
 
+    def get_delivery_note_email_draft(self, note_id: str) -> dict[str, Any]:
+        """Brouillon (destinataire + objet + HTML) depuis le modèle admin, sans envoyer ni modifier le bon."""
+        dn = self.get_delivery_note_by_id(note_id)
+        if not dn:
+            raise ValueError("Bon de livraison introuvable.")
+        if (dn.status or "").strip().lower() == "cancelled":
+            raise ValueError("Bon annulé : préparation d'e-mail impossible.")
+
+        pharmacy = self._pharm_repo.find_by_id(dn.pharmacy_id)
+        if not pharmacy:
+            raise ValueError("Pharmacie introuvable.")
+        to_email = notification_email_for_pharmacy(pharmacy)
+        if not to_email:
+            raise ValueError("Aucun e-mail renseigné pour cette pharmacie.")
+
+        svc = EmailService(self._db)
+        bl_ref = (dn.bl_number or "").strip() or str(dn.id)[:13]
+        subject, body_html = svc.prepare_delivery_note_email(
+            pharmacy_name=pharmacy.name or "",
+            bl_number=bl_ref,
+            delivery_date=(dn.delivery_date or ""),
+        )
+        return {
+            "to_email": to_email,
+            "subject": subject,
+            "body_html": body_html,
+        }
+
+    def send_delivery_note_email_to_pharmacy(
+        self,
+        note_id: str,
+        *,
+        subject: str | None = None,
+        body_html: str | None = None,
+    ) -> dict[str, Any]:
+        """Envoie l’e-mail BL (modèle admin ou contenu fourni), puis marque le bon comme envoyé."""
+        dn = self.get_delivery_note_by_id(note_id)
+        if not dn:
+            raise ValueError("Bon de livraison introuvable.")
+        if (dn.status or "").strip().lower() == "cancelled":
+            raise ValueError("Bon annulé : envoi d’e-mail impossible.")
+
+        pharmacy = self._pharm_repo.find_by_id(dn.pharmacy_id)
+        if not pharmacy:
+            raise ValueError("Pharmacie introuvable.")
+        to_email = notification_email_for_pharmacy(pharmacy)
+        if not to_email:
+            raise ValueError("Aucun e-mail renseigné pour cette pharmacie.")
+
+        svc = EmailService(self._db)
+        bl_ref = (dn.bl_number or "").strip() or str(dn.id)[:13]
+
+        if subject is not None or body_html is not None:
+            if subject is None or body_html is None:
+                raise ValueError("Objet et corps HTML doivent être fournis ensemble.")
+            ok = svc.send_custom_body(to_email, subject, body_html, kind="BL")
+        else:
+            ok = svc.send_delivery_note_email(
+                to_email,
+                pharmacy_name=pharmacy.name or "",
+                bl_number=bl_ref,
+                delivery_date=(dn.delivery_date or ""),
+            )
+        if not ok:
+            raise RuntimeError("Échec lors de la préparation de l’e-mail.")
+
+        marked = self.mark_as_sent(note_id)
+        return {
+            "message": f"Bon de livraison envoyé avec succès à {to_email}",
+            "email": to_email,
+            "delivery_note": marked.to_dict() if marked else None,
+        }
+
     def validate_depot_vente_to_pending(self, note_id: str) -> DeliveryNote | None:
         """Passe un BL « dépôt-vente » en statut facturable (« en attente » / pending)."""
         existing = self.repository.find_by_id(note_id)
         if not existing:
             return None
+        if (existing.status or "").strip().lower() == "cancelled":
+            raise ValueError("Ce bon est annulé ; impossible de modifier son statut.")
         if (existing.status or "").strip() != "depot-vente":
             raise ValueError("Seuls les bons au statut dépôt-vente peuvent être validés ainsi.")
         return self.update_delivery_note(note_id, {"status": "pending"})
@@ -176,7 +492,10 @@ class DeliveryNoteService:
         note = self.repository.find_by_id(note_id)
         if not note:
             raise ValueError("Bon de livraison introuvable")
-        if (note.status or "").strip() == "depot-vente":
+        ns = (note.status or "").strip().lower()
+        if ns == "cancelled":
+            raise ValueError("Ce bon a été annulé ; la facturation n'est plus possible.")
+        if ns == "depot-vente":
             raise ValueError("Les bons au statut dépôt-vente ne peuvent pas être facturés.")
         note_bc = int(note.bottles_count or 0)
         if bottles_to_invoice <= 0 or bottles_to_invoice > note_bc:

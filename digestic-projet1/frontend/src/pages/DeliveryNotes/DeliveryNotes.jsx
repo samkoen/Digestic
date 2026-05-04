@@ -20,6 +20,8 @@ import {
   IconButton,
   TextField,
   Checkbox,
+  MenuItem,
+  Grid,
 } from '@mui/material'
 import ViewColumnIcon from '@mui/icons-material/ViewColumn'
 import CloseIcon from '@mui/icons-material/Close'
@@ -37,6 +39,7 @@ import {
 } from '../../components/DeliveryNoteTable/DeliveryNoteDataCells'
 import { DeliveryNoteFilterCell } from '../../components/DeliveryNoteTable/DeliveryNoteFilterCells'
 import { DeliveryNoteSavedFiltersBar } from '../../components/DeliveryNoteTable/DeliveryNoteSavedFiltersBar'
+import SendEmailComposerDialog from '../../components/SendEmailComposerDialog/SendEmailComposerDialog'
 import {
   EMPTY_DELIVERY_NOTE_FILTERS,
   buildDeliveryNoteListQueryParams,
@@ -55,6 +58,7 @@ import {
   DELIVERY_NOTE_SELECT_COL_PX,
 } from '../../utils/deliveryNoteTableLayoutUtils'
 import { LIST_TABLE_SCROLL_MAX_HEIGHT } from '../../constants/listTableLayout'
+import { useNotifier } from '../../hooks/useNotifier'
 
 const headerCellTextSx = { fontSize: '0.75rem', fontWeight: 600 }
 
@@ -88,6 +92,9 @@ function indicativeInvoiceTotals(bottles, product, pharmacyReductionPct = 0) {
 
 /** Libellé court si ce BL ne doit pas passer à la facturation (null = OK). */
 function deliveryNoteInvoiceBlockReason(row) {
+  if ((row.status || '').toLowerCase() === 'cancelled') {
+    return 'bon annulé'
+  }
   if ((row.bottles_count || 0) < 1) {
     return 'aucune bouteille à facturer'
   }
@@ -133,10 +140,28 @@ function DeliveryNotes() {
   const [invoiceForm, setInvoiceForm] = useState({ bottles: 0 })
   const [billingProduct, setBillingProduct] = useState(null)
   const [pdfLoadingId, setPdfLoadingId] = useState(null)
+  const [bonEmailOpen, setBonEmailOpen] = useState(false)
+  const [bonEmailNoteId, setBonEmailNoteId] = useState(null)
+  const [bonEmailDraft, setBonEmailDraft] = useState(null)
+  const [bonEmailDraftLoading, setBonEmailDraftLoading] = useState(false)
+  const [bonEmailDraftError, setBonEmailDraftError] = useState(null)
+  const [bonEmailSending, setBonEmailSending] = useState(false)
+  const [bonEmailSendError, setBonEmailSendError] = useState(null)
   const [validatingDepotVenteId, setValidatingDepotVenteId] = useState(null)
+  const [cancellingDeliveryNoteId, setCancellingDeliveryNoteId] = useState(null)
+  const [rectifierOpen, setRectifierOpen] = useState(false)
+  const [rectifierTarget, setRectifierTarget] = useState(null)
+  const [rectifierForm, setRectifierForm] = useState({
+    delivery_date: '',
+    bottles_count: '0',
+    free_units_quantity: '0',
+    bl_billing_mode: 'auto',
+  })
+  const [rectifyingDeliveryNoteId, setRectifyingDeliveryNoteId] = useState(null)
   const [selectedBlIds, setSelectedBlIds] = useState(() => new Set())
   const [bulkInvoicing, setBulkInvoicing] = useState(false)
   const noteByIdRef = useRef(new Map())
+  const { notify, NotifierSnackbar } = useNotifier()
 
   const resizableOrder = useMemo(() => {
     if (tableView?.visibleColumnKeys?.length) {
@@ -365,7 +390,13 @@ function DeliveryNotes() {
       ])
       const pmap = {}
       for (const p of pharmacies || []) {
-        pmap[p.id] = { name: p.name, photo_url: p.photo_url, reduction: p.reduction ?? 0 }
+        pmap[p.id] = {
+          name: p.name,
+          photo_url: p.photo_url,
+          reduction: p.reduction ?? 0,
+          email: p.email,
+          pharmacist_email: p.pharmacist_email,
+        }
       }
       setPharmacyMap(pmap)
       setCommercials(comms || [])
@@ -459,12 +490,82 @@ function DeliveryNotes() {
       await deliveryNoteService.downloadPdf(row.id)
     } catch (e) {
       console.error('PDF bon de livraison:', e)
-      // eslint-disable-next-line no-alert
-      alert(e.message || 'Impossible de télécharger le PDF')
+      notify(e.message || 'Impossible de télécharger le PDF', 'error')
     } finally {
       setPdfLoadingId(null)
     }
+  }, [notify])
+
+  const resetBonEmailComposer = useCallback(() => {
+    setBonEmailOpen(false)
+    setBonEmailNoteId(null)
+    setBonEmailDraft(null)
+    setBonEmailDraftError(null)
+    setBonEmailSendError(null)
+    setBonEmailDraftLoading(false)
+    setBonEmailSending(false)
   }, [])
+
+  const handleCloseBonEmailComposer = useCallback(() => {
+    if (bonEmailSending) {
+      return
+    }
+    resetBonEmailComposer()
+  }, [bonEmailSending, resetBonEmailComposer])
+
+  const handleOpenBonEmailComposer = useCallback(
+    async (row) => {
+      setBonEmailNoteId(row.id)
+      setBonEmailOpen(true)
+      setBonEmailDraft(null)
+      setBonEmailDraftError(null)
+      setBonEmailSendError(null)
+      setBonEmailDraftLoading(true)
+      try {
+        const d = await deliveryNoteService.getEmailDraft(row.id)
+        setBonEmailDraft(d)
+      } catch (e) {
+        console.error(e)
+        setBonEmailDraftError(
+          e?.response?.data?.error || e.message || 'Impossible de charger le brouillon d’e-mail',
+        )
+      } finally {
+        setBonEmailDraftLoading(false)
+      }
+    },
+    [],
+  )
+
+  const handleConfirmBonEmailSend = useCallback(
+    async ({ subject, body_html }) => {
+      if (!bonEmailNoteId) {
+        return
+      }
+      setBonEmailSendError(null)
+      setBonEmailSending(true)
+      try {
+        const res = await deliveryNoteService.sendEmail(bonEmailNoteId, {
+          subject,
+          body_html,
+        })
+        void loadData()
+        notify(
+          res.message || (res.email ? `E-mail envoyé à ${res.email}` : 'Envoi effectué.'),
+          'success',
+        )
+        resetBonEmailComposer()
+      } catch (e) {
+        console.error(e)
+        setBonEmailSendError(e?.response?.data?.error || e.message || 'Envoi impossible')
+      } finally {
+        setBonEmailSending(false)
+      }
+    },
+    [bonEmailNoteId, loadData, notify, resetBonEmailComposer],
+  )
+
+  const bonEmailBusyRowId =
+    bonEmailDraftLoading || bonEmailSending ? bonEmailNoteId : null
 
   const navigateToPharmacy = useCallback(
     (pharmacyId) => {
@@ -488,14 +589,103 @@ function DeliveryNotes() {
       } catch (e) {
         console.error(e)
         const msg = e?.response?.data?.error || e.message || 'Impossible de valider le bon'
-        // eslint-disable-next-line no-alert
-        alert(msg)
+        notify(msg, 'error')
       } finally {
         setValidatingDepotVenteId(null)
       }
     },
-    [loadData],
+    [loadData, notify],
   )
+
+  const handleAnnulerBon = useCallback(
+    async (row) => {
+      const label = (row.bl_number && String(row.bl_number).trim()) || row.id
+      // eslint-disable-next-line no-alert
+      if (
+        !window.confirm(
+          `Annuler le bon ${label} ? Les quantités seront réintégrées au dépôt dans la mesure du stock pharmacie disponible. Cette action est réservée aux bons sans facture liée.`,
+        )
+      ) {
+        return
+      }
+      try {
+        setCancellingDeliveryNoteId(row.id)
+        await deliveryNoteService.annulerBon(row.id)
+        void loadData()
+        void loadMetaMaps()
+      } catch (e) {
+        console.error(e)
+        const msg =
+          [e?.response?.data?.error, e?.response?.data?.detail].filter(Boolean).join('\n') ||
+          e.message ||
+          "Impossible d'annuler le bon"
+        notify(msg, 'error')
+      } finally {
+        setCancellingDeliveryNoteId(null)
+      }
+    },
+    [loadData, loadMetaMaps, notify],
+  )
+
+  const handleOpenRectifier = useCallback((row) => {
+    setRectifierTarget(row)
+    const mode =
+      row.status === 'depot-vente' || row.is_deposit_sale ? 'depot_vente' : 'auto'
+    setRectifierForm({
+      delivery_date: format(new Date(), 'yyyy-MM-dd'),
+      bottles_count: String(Math.max(0, Number(row.bottles_count) || 0)),
+      free_units_quantity: String(Math.max(0, Number(row.free_units_quantity) || 0)),
+      bl_billing_mode: mode,
+    })
+    setRectifierOpen(true)
+  }, [])
+
+  const closeRectifierDialog = useCallback(() => {
+    setRectifierOpen(false)
+    setRectifierTarget(null)
+  }, [])
+
+  const handleRectifierSubmit = useCallback(async () => {
+    if (!rectifierTarget) return
+    const bc = Number.parseInt(String(rectifierForm.bottles_count || '0'), 10) || 0
+    const fu = Number.parseInt(String(rectifierForm.free_units_quantity || '0'), 10) || 0
+    if (bc <= 0 && fu <= 0) {
+      notify('Indiquez au moins une bouteille ou une unité gratuite.', 'warning')
+      return
+    }
+    if (!rectifierForm.delivery_date) {
+      notify('Indiquez la date de livraison.', 'warning')
+      return
+    }
+    const prevIdFallback = String(rectifierTarget.id).slice(0, 8)
+    setRectifyingDeliveryNoteId(rectifierTarget.id)
+    try {
+      const created = await deliveryNoteService.rectifierBon(rectifierTarget.id, {
+        delivery_date: rectifierForm.delivery_date,
+        bottles_count: bc,
+        free_units_quantity: fu,
+        bl_billing_mode: rectifierForm.bl_billing_mode,
+      })
+      const prevBl =
+        created.replaced_bl_number && String(created.replaced_bl_number).trim()
+          ? created.replaced_bl_number
+          : prevIdFallback
+      const nextNum = created.bl_number || created.id
+      void loadData()
+      void loadMetaMaps()
+      closeRectifierDialog()
+      notify(`Ancien bon ${prevBl} annulé. Nouveau bon : ${nextNum}.`, 'success')
+    } catch (e) {
+      console.error(e)
+      const msg =
+        [e?.response?.data?.error, e?.response?.data?.detail].filter(Boolean).join('\n') ||
+        e.message ||
+        'Impossible de créer le bon rectificatif'
+      notify(msg, 'error')
+    } finally {
+      setRectifyingDeliveryNoteId(null)
+    }
+  }, [rectifierTarget, rectifierForm, loadData, loadMetaMaps, closeRectifierDialog, notify])
 
   const invoiceableRowsOnPage = useMemo(
     () => rows.filter(isDeliveryNoteInvoiceable),
@@ -545,9 +735,9 @@ function DeliveryNotes() {
     const list = ids.map((id) => noteByIdRef.current.get(id)).filter(Boolean)
     const blLabel = (r) => (r.bl_number && String(r.bl_number).trim()) || r.id
     if (list.length !== ids.length) {
-      // eslint-disable-next-line no-alert
-      alert(
+      notify(
         'Impossible de facturer : certains bons sélectionnés ne sont pas disponibles dans la grille courante. Actualisez la liste ou passez les pages pour charger chaque bon, puis réessayez.',
+        'warning',
       )
       return
     }
@@ -557,13 +747,14 @@ function DeliveryNotes() {
       if (why) blocking.push(`${blLabel(r)} — ${why}`)
     }
     if (blocking.length) {
-      // eslint-disable-next-line no-alert
-      alert(`Facturation annulée.\nAu moins un bon n’est pas facturable :\n\n${blocking.join('\n')}`)
+      notify(
+        `Facturation annulée.\nAu moins un bon n’est pas facturable :\n\n${blocking.join('\n')}`,
+        'warning',
+      )
       return
     }
     if (!billingProduct) {
-      // eslint-disable-next-line no-alert
-      alert('Aucun produit de facturation actif en base.')
+      notify('Aucun produit de facturation actif en base.', 'error')
       return
     }
     setBulkInvoicing(true)
@@ -582,38 +773,64 @@ function DeliveryNotes() {
       setSelectedBlIds(new Set())
       void loadData()
       void loadMetaMaps()
+      notify(`Facturation terminée : ${list.length} bon(s) traité(s).`, 'success')
     } catch (error) {
       console.error(error)
       const data = error.response?.data
       const msg = [data?.error, data?.detail].filter(Boolean).join('\n') || error.message
-      // eslint-disable-next-line no-alert
-      alert(
+      notify(
         msg ||
           'Erreur pendant la facturation groupée ; des factures ont pu être créées avant l’erreur.',
+        'error',
       )
       void loadData()
       void loadMetaMaps()
     } finally {
       setBulkInvoicing(false)
     }
-  }, [billingProduct, loadData, loadMetaMaps, pharmacyMap, selectedBlIds])
+  }, [billingProduct, loadData, loadMetaMaps, notify, pharmacyMap, selectedBlIds])
 
   const bodyCtx = useMemo(
     () => ({
       formatDate,
       navigateToPharmacy,
       getPhotoUrl,
+      isAdmin: user?.role === 'admin',
       onFacturer: (note) => {
         setInvoiceTarget(note)
         setInvoiceForm({ bottles: note.bottles_count })
         setInvoiceDialogOpen(true)
       },
       onValiderDepotVente: handleValiderDepotVente,
+      onAnnulerBon: handleAnnulerBon,
+      onOpenRectifier: handleOpenRectifier,
       handleDownloadPdf,
       pdfLoadingId,
+      handleOpenBonEmailComposer,
+      bonEmailBusyRowId,
+      bonEmailDialogOpen: bonEmailOpen,
+      pharmacyMap,
       validatingDepotVenteId,
+      cancellingDeliveryNoteId,
+      rectifyingDeliveryNoteId,
     }),
-    [navigateToPharmacy, getPhotoUrl, handleDownloadPdf, pdfLoadingId, handleValiderDepotVente, validatingDepotVenteId],
+    [
+      navigateToPharmacy,
+      getPhotoUrl,
+      handleDownloadPdf,
+      pdfLoadingId,
+      handleOpenBonEmailComposer,
+      bonEmailBusyRowId,
+      bonEmailOpen,
+      pharmacyMap,
+      handleValiderDepotVente,
+      validatingDepotVenteId,
+      handleAnnulerBon,
+      handleOpenRectifier,
+      cancellingDeliveryNoteId,
+      rectifyingDeliveryNoteId,
+      user?.role,
+    ],
   )
 
   const handleSort = (property) => {
@@ -665,8 +882,7 @@ function DeliveryNotes() {
       setColumnPickerOpen(false)
     } catch (e) {
       console.error(e)
-      // eslint-disable-next-line no-alert
-      alert(e?.response?.data?.error || e.message || 'Erreur de sauvegarde')
+      notify(e?.response?.data?.error || e.message || 'Erreur de sauvegarde', 'error')
     } finally {
       setSavingColumns(false)
     }
@@ -687,12 +903,12 @@ function DeliveryNotes() {
       closeInvoiceDialog()
       void loadData()
       void loadMetaMaps()
+      notify('Facture créée.', 'success')
     } catch (error) {
       console.error(error)
       const data = error.response?.data
       const msg = [data?.error, data?.detail].filter(Boolean).join('\n') || error.message
-      // eslint-disable-next-line no-alert
-      alert(msg || 'Erreur lors de la facturation')
+      notify(msg || 'Erreur lors de la facturation', 'error')
     }
   }
 
@@ -1025,6 +1241,111 @@ function DeliveryNotes() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      <Dialog
+        open={rectifierOpen}
+        onClose={() => (!rectifyingDeliveryNoteId ? closeRectifierDialog() : undefined)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle sx={{ pr: 5 }}>
+          Bon rectificatif
+          <IconButton
+            aria-label="fermer"
+            onClick={closeRectifierDialog}
+            disabled={!!rectifyingDeliveryNoteId}
+            sx={{ position: 'absolute', right: 8, top: 8 }}
+          >
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Le bon {(rectifierTarget?.bl_number || rectifierTarget?.id || '').toString()} sera annulé (retour stock
+            au dépôt), puis remplacé par un nouveau bon. Sans facture liée. En cas d&apos;erreur sur le nouveau bon,
+            l&apos;opération complète est annulée en base (rollback).
+          </Typography>
+          <Grid container spacing={2} sx={{ mt: 0 }}>
+            <Grid item xs={12}>
+              <TextField
+                fullWidth
+                type="date"
+                label="Date de livraison du nouveau bon"
+                value={rectifierForm.delivery_date}
+                onChange={(e) =>
+                  setRectifierForm((p) => ({ ...p, delivery_date: e.target.value }))
+                }
+                InputLabelProps={{ shrink: true }}
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                type="number"
+                label="Bouteilles (payantes)"
+                inputProps={{ min: 0 }}
+                value={rectifierForm.bottles_count}
+                onChange={(e) =>
+                  setRectifierForm((p) => ({ ...p, bottles_count: e.target.value }))
+                }
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                type="number"
+                label="UG (gratuites)"
+                inputProps={{ min: 0 }}
+                value={rectifierForm.free_units_quantity}
+                onChange={(e) =>
+                  setRectifierForm((p) => ({ ...p, free_units_quantity: e.target.value }))
+                }
+              />
+            </Grid>
+            <Grid item xs={12}>
+              <TextField
+                select
+                fullWidth
+                label="Type du nouveau bon"
+                value={rectifierForm.bl_billing_mode}
+                onChange={(e) =>
+                  setRectifierForm((p) => ({ ...p, bl_billing_mode: e.target.value }))
+                }
+              >
+                <MenuItem value="auto">Selon paiement pharmacie</MenuItem>
+                <MenuItem value="depot_vente">Dépôt-vente</MenuItem>
+                <MenuItem value="pending">Standard (facturable)</MenuItem>
+              </TextField>
+            </Grid>
+          </Grid>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={closeRectifierDialog} disabled={!!rectifyingDeliveryNoteId}>
+            Fermer
+          </Button>
+          <Button
+            variant="contained"
+            onClick={() => void handleRectifierSubmit()}
+            disabled={!!rectifyingDeliveryNoteId}
+          >
+            {rectifyingDeliveryNoteId ? 'Traitement…' : 'Annuler le bon et créer le nouveau'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <SendEmailComposerDialog
+        open={bonEmailOpen}
+        title="Envoyer le bon de livraison par e-mail"
+        onClose={handleCloseBonEmailComposer}
+        draftLoading={bonEmailDraftLoading}
+        draftError={bonEmailDraftError}
+        draft={bonEmailDraft}
+        onSend={handleConfirmBonEmailSend}
+        sending={bonEmailSending}
+        sendError={bonEmailSendError}
+      />
+
+      {NotifierSnackbar}
     </Box>
   )
 }

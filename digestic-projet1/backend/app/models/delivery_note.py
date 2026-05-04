@@ -7,18 +7,18 @@ from datetime import datetime
 class DeliveryNote:
     """Modèle représentant un bon de livraison"""
     id: str
-    visit_report_id: str
     pharmacy_id: str
     commercial_id: str
     delivery_date: str  # ISO format
     bottles_count: int
     free_units_quantity: int = 0
     is_deposit_sale: bool = False
-    status: str = "pending"  # pending, sent, confirmed, fully_invoiced, draft, depot-vente (non facturable)
+    status: str = "pending"  # pending, sent, confirmed, fully_invoiced, draft, depot-vente, cancelled (annulé)
     sage_reference: Optional[str] = None  # Référence dans Sage (quand intégré)
     bl_number: Optional[str] = None  # ex. BL-20260428-A1B2C3D4
     email_sent: bool = False
     email_sent_at: Optional[str] = None
+    visit_report_id: Optional[str] = None
     created_at: str = None
     updated_at: str = None
     

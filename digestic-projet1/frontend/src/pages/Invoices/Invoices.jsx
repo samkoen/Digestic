@@ -19,11 +19,15 @@ import {
 } from '@mui/material'
 import ViewColumnIcon from '@mui/icons-material/ViewColumn'
 import { format } from 'date-fns'
+import { pharmacyService } from '../../services/pharmacyService'
 import { invoiceService } from '../../services/invoiceService'
+import { creditNoteService } from '../../services/creditNoteService'
 import { fetchInvoiceTableView, saveInvoiceTableView } from '../../services/tableViewService'
 import { ResizableHeaderCell } from '../../components/ResizableTableColumns/ResizableHeaderCell'
 import InvoiceColumnPickerDialog from '../../components/InvoiceTable/InvoiceColumnPickerDialog'
 import { InvoiceTableBodyCell, InvoiceActionsCell } from '../../components/InvoiceTable/InvoiceDataCells'
+import IssueTotalCreditNoteDialog from '../../components/InvoiceTable/IssueTotalCreditNoteDialog'
+import MarkInvoicePaidDialog from '../../components/InvoiceTable/MarkInvoicePaidDialog'
 import { InvoiceFilterCell } from '../../components/InvoiceTable/InvoiceFilterCells'
 import { InvoiceSavedFiltersBar } from '../../components/InvoiceTable/InvoiceSavedFiltersBar'
 import {
@@ -32,6 +36,7 @@ import {
   getInitialInvoiceFiltersState,
   invoiceFiltersFromPayload,
   parseDepositFilterFromSearchParams,
+  parseInvoiceNumberFilterFromSearchParams,
   parsePharmacyFilterFromSearchParams,
 } from '../../utils/invoiceListQueryParams'
 import {
@@ -44,6 +49,9 @@ import {
   INVOICE_TABLE_ACTIONS_PX,
 } from '../../utils/invoiceTableLayoutUtils'
 import { LIST_TABLE_SCROLL_MAX_HEIGHT } from '../../constants/listTableLayout'
+import { canIssueTotalCreditNote, canMarkInvoicePaid } from '../../utils/invoiceCreditNoteEligibility'
+import SendEmailComposerDialog from '../../components/SendEmailComposerDialog/SendEmailComposerDialog'
+import { useNotifier } from '../../hooks/useNotifier'
 
 const headerCellTextSx = { fontSize: '0.75rem', fontWeight: 600 }
 
@@ -91,10 +99,21 @@ function Invoices() {
   const [activeSavedFilterId, setActiveSavedFilterId] = useState(null)
   const [pdfLoadingId, setPdfLoadingId] = useState(null)
   const [selectedInvoiceIds, setSelectedInvoiceIds] = useState(() => new Set())
+  const [creditNoteTargetInvoice, setCreditNoteTargetInvoice] = useState(null)
+  const [markPaidTargetInvoice, setMarkPaidTargetInvoice] = useState(null)
+  const [pharmacyMap, setPharmacyMap] = useState({})
+  const [invEmailOpen, setInvEmailOpen] = useState(false)
+  const [invEmailInvoiceId, setInvEmailInvoiceId] = useState(null)
+  const [invEmailDraft, setInvEmailDraft] = useState(null)
+  const [invEmailDraftLoading, setInvEmailDraftLoading] = useState(false)
+  const [invEmailDraftError, setInvEmailDraftError] = useState(null)
+  const [invEmailSending, setInvEmailSending] = useState(false)
+  const [invEmailSendError, setInvEmailSendError] = useState(null)
   const tableWidthRef = useRef(1200)
   const colResizeObserverRef = useRef(null)
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
+  const { notify, NotifierSnackbar } = useNotifier()
 
   const resizableOrder = useMemo(() => {
     if (tableView?.visibleColumnKeys?.length) {
@@ -265,21 +284,28 @@ function Invoices() {
     }
   }
 
-  const canDownloadVosFacturesPdf = (inv) =>
-    inv.external_provider === 'vosfactures' && Boolean(inv.external_invoice_id)
+  const canDownloadVosFacturesPdf = useCallback((inv) => {
+    if (inv.row_kind === 'credit_note') {
+      return inv.external_provider === 'vosfactures' && Boolean(inv.external_credit_note_id)
+    }
+    return inv.external_provider === 'vosfactures' && Boolean(inv.external_invoice_id)
+  }, [])
 
-  const handleDownloadPdf = async (inv) => {
+  const handleDownloadPdf = useCallback(async (inv) => {
     try {
       setPdfLoadingId(inv.id)
-      await invoiceService.downloadVosFacturesPdf(inv.id)
+      if (inv.row_kind === 'credit_note') {
+        await creditNoteService.downloadVosFacturesPdf(inv.id)
+      } else {
+        await invoiceService.downloadVosFacturesPdf(inv.id)
+      }
     } catch (e) {
-      console.error('PDF facture:', e)
-      // eslint-disable-next-line no-alert
-      alert(e.message || 'Impossible de télécharger le PDF')
+      console.error('PDF facture/avoir:', e)
+      notify(e.message || 'Impossible de télécharger le PDF', 'error')
     } finally {
       setPdfLoadingId(null)
     }
-  }
+  }, [notify])
 
   const navigateToPharmacy = useCallback(
     (pharmacyId) => {
@@ -294,17 +320,6 @@ function Invoices() {
     [navigate, searchParams],
   )
 
-  const bodyCtx = useMemo(
-    () => ({
-      formatDate,
-      canDownloadVosFacturesPdf,
-      handleDownloadPdf,
-      pdfLoadingId,
-      navigateToPharmacy,
-    }),
-    [navigateToPharmacy, pdfLoadingId],
-  )
-
   useEffect(() => {
     const stored = localStorage.getItem('user')
     if (stored) {
@@ -312,14 +327,15 @@ function Invoices() {
     }
   }, [])
 
-  /** Navigation interne (ex. fiche pharmacie, lien depuis un BL) : sync query → filtres */
+  /** Navigation interne (ex. fiche pharmacie, lien depuis un BL ou une facture) : sync query → filtres */
   useEffect(() => {
     const extraP = parsePharmacyFilterFromSearchParams(searchParams)
     const extraD = parseDepositFilterFromSearchParams(searchParams)
-    if (!extraP && !extraD) {
+    const extraN = parseInvoiceNumberFilterFromSearchParams(searchParams)
+    if (!extraP && !extraD && !extraN) {
       return
     }
-    const merged = { ...(extraP || {}), ...(extraD || {}) }
+    const merged = { ...(extraP || {}), ...(extraD || {}), ...(extraN || {}) }
     setPage(0)
     setTab(0)
     setActiveSavedFilterId(null)
@@ -391,6 +407,130 @@ function Invoices() {
     void loadData()
   }, [loadData])
 
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const list = await pharmacyService.getAll()
+        if (cancelled) return
+        const map = {}
+        for (const p of list || []) {
+          map[p.id] = {
+            email: p.email,
+            pharmacist_email: p.pharmacist_email,
+          }
+        }
+        setPharmacyMap(map)
+      } catch (e) {
+        console.error(e)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const resetInvEmailComposer = useCallback(() => {
+    setInvEmailOpen(false)
+    setInvEmailInvoiceId(null)
+    setInvEmailDraft(null)
+    setInvEmailDraftError(null)
+    setInvEmailSendError(null)
+    setInvEmailDraftLoading(false)
+    setInvEmailSending(false)
+  }, [])
+
+  const handleCloseInvEmailComposer = useCallback(() => {
+    if (invEmailSending) {
+      return
+    }
+    resetInvEmailComposer()
+  }, [invEmailSending, resetInvEmailComposer])
+
+  const handleOpenInvoiceEmailComposer = useCallback(async (inv) => {
+    if (inv.row_kind === 'credit_note') {
+      return
+    }
+    setInvEmailInvoiceId(inv.id)
+    setInvEmailOpen(true)
+    setInvEmailDraft(null)
+    setInvEmailDraftError(null)
+    setInvEmailSendError(null)
+    setInvEmailDraftLoading(true)
+    try {
+      const d = await invoiceService.getEmailDraft(inv.id)
+      setInvEmailDraft(d)
+    } catch (e) {
+      console.error(e)
+      setInvEmailDraftError(
+        e?.response?.data?.error || e.message || 'Impossible de charger le brouillon d’e-mail',
+      )
+    } finally {
+      setInvEmailDraftLoading(false)
+    }
+  }, [])
+
+  const handleConfirmInvoiceTableEmailSend = useCallback(
+    async ({ subject, body_html }) => {
+      if (!invEmailInvoiceId) {
+        return
+      }
+      setInvEmailSendError(null)
+      setInvEmailSending(true)
+      try {
+        const res = await invoiceService.sendEmail(invEmailInvoiceId, {
+          subject,
+          body_html,
+        })
+        void loadData()
+        notify(
+          res.message || (res.email ? `E-mail envoyé à ${res.email}` : 'Envoi effectué.'),
+          'success',
+        )
+        resetInvEmailComposer()
+      } catch (e) {
+        console.error(e)
+        setInvEmailSendError(e?.response?.data?.error || e.message || 'Envoi impossible')
+      } finally {
+        setInvEmailSending(false)
+      }
+    },
+    [invEmailInvoiceId, loadData, notify, resetInvEmailComposer],
+  )
+
+  const invEmailBusyRowId =
+    invEmailDraftLoading || invEmailSending ? invEmailInvoiceId : null
+
+  const bodyCtx = useMemo(
+    () => ({
+      formatDate,
+      canDownloadVosFacturesPdf,
+      canIssueTotalCreditNote,
+      canMarkInvoicePaid,
+      requestIssueCreditNote: (inv) => setCreditNoteTargetInvoice(inv),
+      requestMarkPaid: (inv) => setMarkPaidTargetInvoice(inv),
+      handleDownloadPdf,
+      pdfLoadingId,
+      navigateToPharmacy,
+      pharmacyMap,
+      handleOpenInvoiceEmailComposer,
+      invEmailBusyRowId,
+      invEmailOpen,
+    }),
+    [
+      navigateToPharmacy,
+      pdfLoadingId,
+      canDownloadVosFacturesPdf,
+      handleDownloadPdf,
+      pharmacyMap,
+      handleOpenInvoiceEmailComposer,
+      invEmailBusyRowId,
+      invEmailOpen,
+      canIssueTotalCreditNote,
+      canMarkInvoicePaid,
+    ],
+  )
+
   const handleTabChange = (_, newTab) => {
     setTab(newTab)
     setActiveSavedFilterId(null)
@@ -457,15 +597,19 @@ function Invoices() {
       setColumnPickerOpen(false)
     } catch (e) {
       console.error(e)
-      // eslint-disable-next-line no-alert
-      alert(e?.response?.data?.error || e.message || 'Erreur de sauvegarde')
+      notify(e?.response?.data?.error || e.message || 'Erreur de sauvegarde', 'error')
     } finally {
       setSavingColumns(false)
     }
   }
 
+  const selectableRowIds = useMemo(
+    () => rows.filter((r) => r.row_kind !== 'credit_note').map((r) => r.id),
+    [rows],
+  )
+
   const headerBulkCheckboxProps = useMemo(() => {
-    const ids = rows.map((r) => r.id)
+    const ids = selectableRowIds
     if (ids.length === 0) {
       return { checked: false, indeterminate: false }
     }
@@ -474,7 +618,7 @@ function Invoices() {
       checked: sel === ids.length,
       indeterminate: sel > 0 && sel < ids.length,
     }
-  }, [rows, selectedInvoiceIds])
+  }, [selectableRowIds, selectedInvoiceIds])
 
   const toggleSelectRow = useCallback((id) => {
     setSelectedInvoiceIds((prev) => {
@@ -486,7 +630,7 @@ function Invoices() {
   }, [])
 
   const toggleSelectAllOnPage = useCallback(() => {
-    const ids = rows.map((r) => r.id)
+    const ids = rows.filter((r) => r.row_kind !== 'credit_note').map((r) => r.id)
     if (ids.length === 0) return
     setSelectedInvoiceIds((prev) => {
       const allOn = ids.every((id) => prev.has(id))
@@ -600,7 +744,7 @@ function Invoices() {
                 >
                   <Checkbox
                     size="small"
-                    disabled={rows.length === 0}
+                    disabled={selectableRowIds.length === 0}
                     checked={headerBulkCheckboxProps.checked}
                     indeterminate={headerBulkCheckboxProps.indeterminate}
                     onChange={toggleSelectAllOnPage}
@@ -643,7 +787,7 @@ function Invoices() {
                   stackZIndex={0}
                   sx={headerCellTextSx}
                 >
-                  PDF
+                  Actions
                 </ResizableHeaderCell>
               </TableRow>
               <TableRow>
@@ -709,6 +853,7 @@ function Invoices() {
                   >
                     <Checkbox
                       size="small"
+                      disabled={inv.row_kind === 'credit_note'}
                       checked={selectedInvoiceIds.has(inv.id)}
                       onChange={() => toggleSelectRow(inv.id)}
                       inputProps={{
@@ -747,6 +892,34 @@ function Invoices() {
           />
         </Paper>
       </Box>
+
+      <IssueTotalCreditNoteDialog
+        open={creditNoteTargetInvoice != null}
+        invoice={creditNoteTargetInvoice ?? undefined}
+        onClose={() => setCreditNoteTargetInvoice(null)}
+        onSuccess={() => void loadData()}
+      />
+
+      <MarkInvoicePaidDialog
+        open={markPaidTargetInvoice != null}
+        invoice={markPaidTargetInvoice ?? undefined}
+        onClose={() => setMarkPaidTargetInvoice(null)}
+        onSuccess={() => void loadData()}
+      />
+
+      <SendEmailComposerDialog
+        open={invEmailOpen}
+        title="Envoyer la facture par e-mail"
+        onClose={handleCloseInvEmailComposer}
+        draftLoading={invEmailDraftLoading}
+        draftError={invEmailDraftError}
+        draft={invEmailDraft}
+        onSend={handleConfirmInvoiceTableEmailSend}
+        sending={invEmailSending}
+        sendError={invEmailSendError}
+      />
+
+      {NotifierSnackbar}
     </Box>
   )
 }

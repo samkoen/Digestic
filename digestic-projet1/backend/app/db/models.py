@@ -419,8 +419,11 @@ class Deposit(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), primary_key=True, default=_uuid
     )
-    visit_report_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("visit_reports.id", ondelete="CASCADE"), nullable=False, index=True
+    visit_report_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("visit_reports.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
     pharmacy_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("pharmacies.id", ondelete="CASCADE"), nullable=False, index=True
@@ -449,7 +452,7 @@ class Deposit(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
-    visit_report: Mapped["VisitReport"] = relationship(back_populates="deposits")
+    visit_report: Mapped["VisitReport | None"] = relationship(back_populates="deposits")
     lines: Mapped[list["DepositLine"]] = relationship(
         back_populates="deposit", cascade="all, delete-orphan"
     )
@@ -623,6 +626,12 @@ class BillingRecapSlice(Base):
 
 class CreditNote(Base):
     __tablename__ = "credit_notes"
+    __table_args__ = (
+        CheckConstraint(
+            "credit_scope IN ('full', 'partial')",
+            name="ck_credit_notes_credit_scope",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), primary_key=True, default=_uuid
@@ -643,6 +652,9 @@ class CreditNote(Base):
     external_provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
     external_credit_note_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     mock_provider_payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    credit_scope: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="full", server_default="full"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -671,9 +683,16 @@ class CreditNoteLine(Base):
     unit_price: Mapped[float] = mapped_column(Numeric(12, 4), nullable=False)
     vat_rate: Mapped[float] = mapped_column(Numeric(5, 2), nullable=False)
     is_free_unit: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    source_invoice_line_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("invoice_lines.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     credit_note: Mapped["CreditNote"] = relationship(back_populates="lines")
     product: Mapped["Product"] = relationship()
+    source_invoice_line: Mapped["InvoiceLine | None"] = relationship()
 
 
 class Payment(Base):
@@ -769,5 +788,27 @@ class SavedListFilter(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+
+class EmailTemplate(Base):
+    """Modèles d’e-mail (HTML) éditables par l’admin. Clé fonctionnelle = template_key."""
+
+    __tablename__ = "email_templates"
+    __table_args__ = (UniqueConstraint("template_key", name="uq_email_templates_template_key"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=_uuid
+    )
+    template_key: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    subject_template: Mapped[str] = mapped_column(Text, nullable=False)
+    body_html_template: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    updated_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+    updated_by: Mapped["User | None"] = relationship(foreign_keys=[updated_by_user_id])
 
 
