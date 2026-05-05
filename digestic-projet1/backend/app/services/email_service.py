@@ -6,7 +6,11 @@ from __future__ import annotations
 
 import html as html_escape
 import logging
-from typing import Any
+from email import encoders
+from email.mime.application import MIMEApplication
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from typing import Any, Sequence
 
 from sqlalchemy.orm import Session
 
@@ -19,6 +23,35 @@ from app.repositories.email_template_repository import EmailTemplateRepository
 from app.utils.email_template_render import interpolate_template
 
 logger = logging.getLogger(__name__)
+
+# (octets PDF, nom de fichier — sanitisation pour les en-têtes MIME)
+EmailAttachment = tuple[bytes, str]
+
+
+def _sanitize_attachment_filename(name: str, fallback: str) -> str:
+    s = (name or "").strip() or fallback
+    safe = "".join(c if c.isalnum() or c in " ._-()" else "_" for c in s)
+    return safe[:180] if safe else fallback
+
+
+def _build_multipart_message(
+    subject: str,
+    to_email: str,
+    body_html: str,
+    attachments: Sequence[EmailAttachment],
+) -> MIMEMultipart:
+    root = MIMEMultipart("mixed")
+    root["Subject"] = subject
+    root["To"] = to_email
+    root.attach(MIMEText(body_html, "html", "utf-8"))
+    for pdf_bytes, fname in attachments:
+        fn = _sanitize_attachment_filename(fname, "document.pdf")
+        if not fn.lower().endswith(".pdf"):
+            fn = f"{fn}.pdf"
+        part = MIMEApplication(pdf_bytes, _subtype="pdf", _encoder=encoders.encode_base64)
+        part.add_header("Content-Disposition", "attachment", filename=fn)
+        root.attach(part)
+    return root
 
 
 def _money_fr(amount: float | None) -> str:
@@ -98,6 +131,7 @@ class EmailService:
         invoice_amount: float | None,
         invoice_date: str | None,
         due_date: str | None,
+        attachments: Sequence[EmailAttachment] | None = None,
     ) -> bool:
         subject, html = self.prepare_invoice_email(
             pharmacy_name=pharmacy_name,
@@ -106,7 +140,9 @@ class EmailService:
             invoice_date=invoice_date,
             due_date=due_date,
         )
-        return self._log_send(to_email, subject, html, kind="facture")
+        return self._log_send(
+            to_email, subject, html, kind="facture", attachments=attachments or ()
+        )
 
     def prepare_delivery_note_email(
         self,
@@ -140,13 +176,14 @@ class EmailService:
         pharmacy_name: str,
         bl_number: str | None,
         delivery_date: str | None,
+        attachments: Sequence[EmailAttachment] | None = None,
     ) -> bool:
         subject, html = self.prepare_delivery_note_email(
             pharmacy_name=pharmacy_name,
             bl_number=bl_number,
             delivery_date=delivery_date,
         )
-        return self._log_send(to_email, subject, html, kind="BL")
+        return self._log_send(to_email, subject, html, kind="BL", attachments=attachments or ())
 
     def send_custom_body(
         self,
@@ -155,12 +192,15 @@ class EmailService:
         body_html: str,
         *,
         kind: str,
+        attachments: Sequence[EmailAttachment] | None = None,
     ) -> bool:
         if not (subject or "").strip():
             raise ValueError("L'objet est obligatoire.")
         if not (body_html or "").strip():
             raise ValueError("Le corps du message est obligatoire.")
-        return self._log_send(to_email, subject.strip(), body_html, kind=kind)
+        return self._log_send(
+            to_email, subject.strip(), body_html, kind=kind, attachments=attachments or ()
+        )
 
     def send_invoice_unpaid_reminder_email(
         self,
@@ -196,24 +236,43 @@ class EmailService:
             subject_fallback=subj_fallback,
             plain_body_fallback=body_fallback,
         )
-        return self._log_send(to_email, subject, html, kind="rappel_facture_impayée")
+        return self._log_send(to_email, subject, html, kind="rappel_facture_impayée", attachments=())
 
-    def _log_send(self, to_email: str, subject: str, body_html: str, *, kind: str) -> bool:
+    def _log_send(
+        self,
+        to_email: str,
+        subject: str,
+        body_html: str,
+        *,
+        kind: str,
+        attachments: Sequence[EmailAttachment] = (),
+    ) -> bool:
         try:
             excerpt = body_html[:1200] + (" …[tronqué]" if len(body_html) > 1200 else "")
-            # Les logger INFO de `app.*` ne s’affichent souvent pas avec Uvicorn seul sans config logging.
+            att_lines = "".join(
+                f"  Pièce jointe  : {_sanitize_attachment_filename(fn, 'fichier.pdf')} ({len(data)} o)\n"
+                for data, fn in attachments
+            )
+            if not attachments:
+                att_lines = "  Pièces jointes : aucune\n"
+
+            mime_msg = _build_multipart_message(subject, to_email, body_html, list(attachments))
+            # MIME prêt pour SMTP ; pour l’instant journalisation uniquement
+
             print(
                 f"\n--- Simulation e-mail ({kind}) — pas de SMTP —\n"
                 f"  Destinataire : {to_email}\n"
                 f"  Objet        : {subject}\n"
+                f"{att_lines}"
                 f"  Corps HTML   :\n{excerpt}\n"
+                f"  MIME (approx. {len(mime_msg.as_bytes())} o)\n"
                 "---\n",
                 flush=True,
             )
             logger.info("[email:%s] -> %s", kind, to_email)
             logger.info("Sujet: %s", subject)
+            logger.info("Pièces jointes: %s", [a[1] for a in attachments])
             logger.info("Corps HTML: %s", body_html[:2000])
-            # TODO: MIMEMultipart + pièces jointes + SMTP/SendGrid
             return True
         except Exception as e:
             logger.error("Erreur lors de la préparation de l'e-mail: %s", e)

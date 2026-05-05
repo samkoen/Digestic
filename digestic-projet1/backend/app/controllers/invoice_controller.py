@@ -288,6 +288,8 @@ def send_invoice_email(
                 status_code=400,
             )
         email_service = EmailService(db)
+        pdf_bundle = service.fetch_vosfactures_pdf(invoice_id)
+        inv_attachments: tuple[tuple[bytes, str], ...] = (pdf_bundle,) if pdf_bundle else ()
         if body.subject is not None or body.body_html is not None:
             if body.subject is None or body.body_html is None:
                 return JSONResponse(
@@ -300,6 +302,7 @@ def send_invoice_email(
                     body.subject,
                     body.body_html,
                     kind="facture",
+                    attachments=inv_attachments,
                 )
             except ValueError as e:
                 return JSONResponse({"error": str(e)}, status_code=400)
@@ -311,6 +314,7 @@ def send_invoice_email(
                 invoice_amount=invoice.amount,
                 invoice_date=invoice.issue_date,
                 due_date=invoice.due_date,
+                attachments=inv_attachments,
             )
         if success:
             return {

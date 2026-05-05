@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import date, datetime, timezone
 from typing import Any, List, Optional
@@ -27,6 +28,9 @@ from app.repositories.product_repository import get_default_billing_product_row
 from app.domain.pharmacy_notification_email import notification_email_for_pharmacy
 from app.services.billing_stock_service import apply_deposit_to_pharmacy, reverse_bl_deposit_shipment
 from app.services.email_service import EmailService
+from app.services.invoice_service import InvoiceService
+
+logger = logging.getLogger(__name__)
 
 
 class DeliveryNoteService:
@@ -369,16 +373,24 @@ class DeliveryNoteService:
         svc = EmailService(self._db)
         bl_ref = (dn.bl_number or "").strip() or str(dn.id)[:13]
 
+        bl_pdf = self.build_delivery_note_pdf(note_id)
+        bl_attach: tuple[tuple[bytes, str], ...] = (bl_pdf,) if bl_pdf else ()
+        if not bl_pdf:
+            logger.warning("PDF BL introuvable — envoi e-mail sans pièce jointe (bon %s)", note_id)
+
         if subject is not None or body_html is not None:
             if subject is None or body_html is None:
                 raise ValueError("Objet et corps HTML doivent être fournis ensemble.")
-            ok = svc.send_custom_body(to_email, subject, body_html, kind="BL")
+            ok = svc.send_custom_body(
+                to_email, subject, body_html, kind="BL", attachments=bl_attach,
+            )
         else:
             ok = svc.send_delivery_note_email(
                 to_email,
                 pharmacy_name=pharmacy.name or "",
                 bl_number=bl_ref,
                 delivery_date=(dn.delivery_date or ""),
+                attachments=bl_attach,
             )
         if not ok:
             raise RuntimeError("Échec lors de la préparation de l’e-mail.")
@@ -653,6 +665,44 @@ class DeliveryNoteService:
             mock_provider_payload=vf.payload,
         )
         created = self._invoice_repo.create(inv, lines=lines_spec)
+
+        to_mail = notification_email_for_pharmacy(pharmacy)
+        if to_mail:
+            try:
+                inv_svc = InvoiceService(self._invoice_repo)
+                pdf_bundle = inv_svc.fetch_vosfactures_pdf(created.id)
+                inv_attach: tuple[tuple[bytes, str], ...] = (pdf_bundle,) if pdf_bundle else ()
+                if not pdf_bundle and (created.external_provider or "").strip().lower() == "vosfactures":
+                    logger.warning(
+                        "PDF facture VosFactures absent — envoi automatique sans pièce jointe (%s)",
+                        created.invoice_number,
+                    )
+                email_ok = EmailService(self._db).send_invoice_email(
+                    to_mail,
+                    pharmacy_name=pharmacy.name or "",
+                    invoice_number=created.invoice_number,
+                    invoice_amount=created.amount,
+                    invoice_date=created.issue_date,
+                    due_date=created.due_date,
+                    attachments=inv_attach,
+                )
+                if not email_ok:
+                    logger.warning(
+                        "Échec préparation e-mail facture après émission (%s / %s)",
+                        created.invoice_number,
+                        created.id,
+                    )
+            except Exception:
+                logger.exception(
+                    "Erreur lors de l’envoi automatique de l’e-mail facture (%s / %s)",
+                    created.invoice_number,
+                    created.id,
+                )
+        else:
+            logger.info(
+                "Aucun e-mail pharmacie : pas d’envoi automatique après facturation (%s)",
+                created.invoice_number,
+            )
 
         remainder = note_bc - bottles_to_invoice
         if remainder > 0:

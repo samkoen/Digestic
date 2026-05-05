@@ -53,6 +53,7 @@ import { WEEKS_UNTIL_RETURN_OPTIONS, validateVisitNotCompletedReason } from '../
 import ResizableTextField from '../../components/ResizableTextField/ResizableTextField'
 import PharmacyForm from '../../components/PharmacyForm/PharmacyForm'
 import { deliveryNoteService } from '../../services/deliveryNoteService'
+import { useNotifier } from '../../hooks/useNotifier'
 
 /** Raccourcis : insertion dans le texte (curseur ou fin). */
 const COMMENT_EMOJI_SHORTCUTS = [
@@ -80,6 +81,7 @@ function PharmacyDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
   const location = useLocation()
+  const { notify, NotifierSnackbar } = useNotifier()
   const [pharmacy, setPharmacy] = useState(null)
   const [visits, setVisits] = useState([])
   const [visitReports, setVisitReports] = useState([])
@@ -201,15 +203,16 @@ function PharmacyDetail() {
   const handleStandaloneBlSubmit = async () => {
     const commercialId = resolveCommercialForStandaloneBl()
     if (!commercialId) {
-      alert(
+      notify(
         "Attribuez un commercial à cette pharmacie ou planifiez une visite avec un commercial avant de créer un bon.",
+        'warning',
       )
       return
     }
     const bc = Number.parseInt(String(standaloneBottles || '0'), 10) || 0
     const fu = Number.parseInt(String(standaloneFreeUnits || '0'), 10) || 0
     if (bc <= 0 && fu <= 0) {
-      alert('Indiquez au moins une bouteille ou une unité gratuite.')
+      notify('Indiquez au moins une bouteille ou une unité gratuite.', 'warning')
       return
     }
     setStandaloneBlSaving(true)
@@ -224,9 +227,12 @@ function PharmacyDetail() {
       })
       await fetchData()
       setStandaloneBlOpen(false)
-      alert(`Bon créé (${created.bl_number || created.id}).`)
+      notify(`Bon créé (${created.bl_number || created.id}).`, 'success')
     } catch (error) {
-      alert(error.response?.data?.error || error.message || 'Erreur lors de la création du bon.')
+      notify(
+        error.response?.data?.error || error.message || 'Erreur lors de la création du bon.',
+        'error',
+      )
     } finally {
       setStandaloneBlSaving(false)
     }
@@ -251,7 +257,7 @@ function PharmacyDetail() {
         setReportFormData((prev) => ({ ...prev, [field]: url }))
       } catch (err) {
         console.error(err)
-        alert("Échec de l'envoi du fichier")
+        notify("Échec de l'envoi du fichier", 'error')
       }
     }
     input.click()
@@ -266,7 +272,7 @@ function PharmacyDetail() {
         reportFormData.visit_not_completed_reason
       )
       if (reasonErr) {
-        alert(reasonErr)
+        notify(reasonErr, 'warning')
         return
       }
       const plannedVisits = visits.filter((v) => v.status === 'planned')
@@ -282,8 +288,9 @@ function PharmacyDetail() {
       }
 
       if (!commercialId) {
-        alert(
-          "Impossible de créer le rapport : attribuez un commercial à cette pharmacie dans la fiche, ou planifiez une visite avec un commercial."
+        notify(
+          "Impossible de créer le rapport : attribuez un commercial à cette pharmacie dans la fiche, ou planifiez une visite avec un commercial.",
+          'warning',
         )
         return
       }
@@ -321,7 +328,10 @@ function PharmacyDetail() {
     } catch (error) {
       console.error('Error creating report:', error)
       console.error('Error response:', error.response?.data)
-      alert(`Erreur lors de la création du rapport: ${error.response?.data?.error || error.message}`)
+      notify(
+        `Erreur lors de la création du rapport: ${error.response?.data?.error || error.message}`,
+        'error',
+      )
     }
   }
 
@@ -365,7 +375,7 @@ function PharmacyDetail() {
       setNewCommentText('')
     } catch (error) {
       console.error('Error adding comment:', error)
-      alert(error?.response?.data?.error || "Impossible d'ajouter le commentaire")
+      notify(error?.response?.data?.error || "Impossible d'ajouter le commentaire", 'error')
     } finally {
       setCommentSubmitting(false)
     }
@@ -378,7 +388,7 @@ function PharmacyDetail() {
       setComments((prev) => prev.filter((c) => c.id !== commentId))
     } catch (error) {
       console.error('Error deleting comment:', error)
-      alert(error?.response?.data?.error || 'Impossible de supprimer le commentaire')
+      notify(error?.response?.data?.error || 'Impossible de supprimer le commentaire', 'error')
     }
   }
 
@@ -1182,6 +1192,8 @@ function PharmacyDetail() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {NotifierSnackbar}
     </Box>
   )
 }
