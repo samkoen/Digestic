@@ -9,6 +9,7 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  Snackbar,
   TextField,
   Typography,
 } from '@mui/material'
@@ -64,6 +65,7 @@ export function SavedFiltersBar(p) {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [saveName, setSaveName] = useState('')
   const [saving, setSaving] = useState(false)
+  const [deleteConfirmItem, setDeleteConfirmItem] = useState(null)
 
   const setExpandedAndStore = (next) => {
     setExpanded(next)
@@ -125,11 +127,19 @@ export function SavedFiltersBar(p) {
     }
   }
 
-  const handleDeleteChip = async (item, e) => {
+  const handleDeleteChip = (item, e) => {
     e.stopPropagation()
-    if (!window.confirm(`Supprimer le filtre « ${item.name} » ?`)) {
+    setDeleteConfirmItem(item)
+  }
+
+  const cancelDeleteConfirm = () => setDeleteConfirmItem(null)
+
+  const runConfirmedDelete = async () => {
+    const item = deleteConfirmItem
+    if (!item) {
       return
     }
+    setDeleteConfirmItem(null)
     try {
       await filterClient.remove(item.id)
       if (activeSavedFilterId === item.id && onActiveFilterRemoved) {
@@ -220,6 +230,30 @@ export function SavedFiltersBar(p) {
           ))}
         </Box>
       </Collapse>
+
+      <Snackbar
+        open={Boolean(deleteConfirmItem)}
+        onClose={(_, reason) => {
+          if (reason === 'clickaway') {
+            cancelDeleteConfirm()
+          }
+        }}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        autoHideDuration={null}
+        message={
+          deleteConfirmItem ? `Supprimer le filtre « ${deleteConfirmItem.name} » ?` : ''
+        }
+        action={
+          <>
+            <Button color="inherit" size="small" onClick={cancelDeleteConfirm}>
+              Annuler
+            </Button>
+            <Button color="inherit" size="small" onClick={() => void runConfirmedDelete()}>
+              OK
+            </Button>
+          </>
+        }
+      />
 
       <Dialog open={dialogOpen} onClose={() => !saving && setDialogOpen(false)} fullWidth maxWidth="xs">
         <DialogTitle>Enregistrer ce filtre</DialogTitle>
