@@ -790,6 +790,24 @@ class SavedListFilter(Base):
     )
 
 
+class PharmacyAdvancedFilter(Base):
+    """Filtre avancé liste pharmacies : conditions (pharmacie / facture / BL) avec AND ou OR."""
+
+    __tablename__ = "pharmacy_advanced_filters"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=_uuid
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
 class EmailTemplate(Base):
     """Modèles d’e-mail (HTML) éditables par l’admin. Clé fonctionnelle = template_key."""
 

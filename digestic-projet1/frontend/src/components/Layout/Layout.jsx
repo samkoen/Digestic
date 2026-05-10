@@ -18,6 +18,7 @@ import {
 import MenuIcon from '@mui/icons-material/Menu'
 import DashboardIcon from '@mui/icons-material/Dashboard'
 import LocalPharmacyIcon from '@mui/icons-material/LocalPharmacy'
+import TuneIcon from '@mui/icons-material/Tune'
 import EventIcon from '@mui/icons-material/Event'
 import CalendarTodayIcon from '@mui/icons-material/CalendarToday'
 import ReceiptIcon from '@mui/icons-material/Receipt'
@@ -70,6 +71,11 @@ function Layout({ children }) {
 
     if (user?.role === 'admin') {
       baseItems.push({ text: 'Bons de livraison', icon: <LocalShippingIcon />, path: '/delivery-notes' })
+      baseItems.push({
+        text: 'Filtres avancés (pharmacies)',
+        icon: <TuneIcon />,
+        path: '/pharmacies/advanced-filters',
+      })
       baseItems.push({ text: 'Dépôts', icon: <WarehouseIcon />, path: '/depots' })
       baseItems.push({ text: 'Produits', icon: <Inventory2Icon />, path: '/products' })
       baseItems.push({ text: 'Commerciaux', icon: <PeopleIcon />, path: '/users' })

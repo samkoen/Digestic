@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link as RouterLink, useNavigate } from 'react-router-dom'
 import {
   Box,
   Typography,
@@ -14,11 +14,16 @@ import {
   TableSortLabel,
   TablePagination,
   LinearProgress,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
 } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
 import EditIcon from '@mui/icons-material/Edit'
 import VisibilityIcon from '@mui/icons-material/Visibility'
 import DeleteIcon from '@mui/icons-material/Delete'
+import TuneIcon from '@mui/icons-material/Tune'
 import ViewColumnIcon from '@mui/icons-material/ViewColumn'
 import { format, parseISO } from 'date-fns'
 import { pharmacyService, fetchPharmacyDistinctCities } from '../../services/pharmacyService'
@@ -38,6 +43,7 @@ import {
   buildPharmacyListQueryParams,
   pharmacyFiltersFromPayload,
 } from '../../utils/pharmacyListQueryParams'
+import { listPharmacyAdvancedFilters } from '../../services/pharmacyAdvancedFilterService'
 import {
   computeResizablePixelWidths,
   defaultEqualFractions,
@@ -86,6 +92,8 @@ function Pharmacies() {
   const [columnPickerOpen, setColumnPickerOpen] = useState(false)
   const [savingColumns, setSavingColumns] = useState(false)
   const [activeSavedFilterId, setActiveSavedFilterId] = useState(null)
+  const [advancedFilterId, setAdvancedFilterId] = useState('')
+  const [advancedFilterOptions, setAdvancedFilterOptions] = useState([])
   const tableWidthRef = useRef(1200)
   const colResizeObserverRef = useRef(null)
   const navigate = useNavigate()
@@ -257,6 +265,29 @@ function Pharmacies() {
   }, [])
 
   useEffect(() => {
+    if (!user) {
+      return
+    }
+    let c = true
+    ;(async () => {
+      try {
+        const list = await listPharmacyAdvancedFilters()
+        if (c) {
+          setAdvancedFilterOptions(Array.isArray(list) ? list : [])
+        }
+      } catch (e) {
+        console.error(e)
+        if (c) {
+          setAdvancedFilterOptions([])
+        }
+      }
+    })()
+    return () => {
+      c = false
+    }
+  }, [user])
+
+  useEffect(() => {
     let c = true
     ;(async () => {
       try {
@@ -303,6 +334,7 @@ function Pharmacies() {
           orderBy,
           order,
           debouncedFilters,
+          advancedFilterId,
         }),
       )
       setRows(
@@ -320,7 +352,7 @@ function Pharmacies() {
     } finally {
       setListLoading(false)
     }
-  }, [page, rowsPerPage, orderBy, order, debouncedFilters])
+  }, [page, rowsPerPage, orderBy, order, debouncedFilters, advancedFilterId])
 
   useEffect(() => {
     void loadData()
@@ -519,6 +551,7 @@ function Pharmacies() {
     const next = pharmacyFiltersFromPayload(pl.filters)
     setFilters(next)
     setDebouncedFilters(next)
+    setAdvancedFilterId('')
     if (pl.orderBy) {
       setOrderBy(pl.orderBy)
     }
@@ -533,11 +566,12 @@ function Pharmacies() {
     setPage(0)
     setFilters({ ...EMPTY_PHARMACY_FILTERS })
     setDebouncedFilters({ ...EMPTY_PHARMACY_FILTERS })
+    setAdvancedFilterId('')
   }
 
-  const hasActiveFilters = Object.values(filters).some((v) =>
-    Array.isArray(v) ? v.length > 0 : v !== '',
-  )
+  const hasActiveFilters =
+    Object.values(filters).some((v) => (Array.isArray(v) ? v.length > 0 : v !== '')) ||
+    Boolean(String(advancedFilterId || '').trim())
 
   const onSaveColumnPicker = async (keys) => {
     setSavingColumns(true)
@@ -597,6 +631,50 @@ function Pharmacies() {
           onSelectSaved={handleSelectSavedFilter}
           onActiveFilterRemoved={() => setActiveSavedFilterId(null)}
         />
+      )}
+
+      {user && (
+        <Box
+          display="flex"
+          flexWrap="wrap"
+          gap={2}
+          alignItems="center"
+          sx={{ mb: 2 }}
+        >
+          <FormControl size="small" sx={{ minWidth: 280, maxWidth: 480 }}>
+            <InputLabel id="adv-filter-label">Filtre avancé</InputLabel>
+            <Select
+              labelId="adv-filter-label"
+              label="Filtre avancé"
+              value={advancedFilterId ? advancedFilterId : ''}
+              onChange={(e) => {
+                setActiveSavedFilterId(null)
+                setPage(0)
+                setAdvancedFilterId(e.target.value)
+              }}
+            >
+              <MenuItem value="">
+                <em>Aucun</em>
+              </MenuItem>
+              {advancedFilterOptions.map((o) => (
+                <MenuItem key={o.id} value={o.id}>
+                  {o.name}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          {user?.role === 'admin' && (
+            <Button
+              component={RouterLink}
+              to="/pharmacies/advanced-filters"
+              size="small"
+              variant="outlined"
+              startIcon={<TuneIcon />}
+            >
+              Définir les filtres avancés…
+            </Button>
+          )}
+        </Box>
       )}
 
       {user?.role === 'admin' && tableView && (

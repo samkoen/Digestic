@@ -5,6 +5,11 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.dependencies import get_db
+from app.db import mappers as mp
+import app.db.models as orm
+from app.repositories.pharmacy_advanced_filter_engine import (
+    sanitize_pharmacy_advanced_filter_payload,
+)
 from app.domain.pharmacy_table_columns import PHARMACY_SORT_KEYS
 from app.pagination import MAX_PAGE_SIZE
 from app.repositories.pharmacy_comment_repository import PharmacyCommentRepository
@@ -21,7 +26,7 @@ def get_pharmacy_service(db: Session = Depends(get_db)) -> PharmacyService:
 @router.get("")
 def get_pharmacies(
     request: Request,
-    service: PharmacyService = Depends(get_pharmacy_service),
+    db: Session = Depends(get_db),
     page: int = Query(1, ge=1, description="Numéro de page (1-based)"),
     page_size: int = Query(20, ge=1, le=MAX_PAGE_SIZE, description="Taille de page"),
     sort: str = Query(
@@ -79,6 +84,10 @@ def get_pharmacies(
         None,
         description="UUID dépôt(s) ; répéter pour plusieurs (OU)",
     ),
+    advanced_filter_id: Optional[str] = Query(
+        None,
+        description="UUID d’un filtre avancé enregistré (page Filtres liste pharmacies).",
+    ),
 ):
     try:
         if order.lower() not in ("asc", "desc"):
@@ -86,6 +95,20 @@ def get_pharmacies(
         skey = sort if sort in PHARMACY_SORT_KEYS else "name"
         user_role = request.session.get("user_role")
         user_id = request.session.get("user_id")
+        service = PharmacyService(
+            PharmacyRepository(db),
+            PharmacyCommentRepository(db),
+        )
+        adv_payload = None
+        if advanced_filter_id and str(advanced_filter_id).strip():
+            try:
+                fid = mp.parse_uuid(str(advanced_filter_id).strip())
+            except ValueError:
+                fid = None
+            if fid is not None:
+                row = db.get(orm.PharmacyAdvancedFilter, fid)
+                if row and isinstance(row.payload, dict):
+                    adv_payload = sanitize_pharmacy_advanced_filter_payload(row.payload)
         return service.list_pharmacies_paginated(
             user_role=user_role,
             user_id=str(user_id) if user_id else None,
@@ -110,6 +133,7 @@ def get_pharmacies(
             rib=rib,
             depot=depot,
             warehouse_id=warehouse_id,
+            advanced_filter_payload=adv_payload,
         )
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)

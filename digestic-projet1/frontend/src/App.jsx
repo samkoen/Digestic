@@ -4,6 +4,7 @@ import Layout from './components/Layout/Layout'
 import Login from './pages/Login/Login'
 import Dashboard from './pages/Dashboard/Dashboard'
 import Pharmacies from './pages/Pharmacies/Pharmacies'
+import PharmacyAdvancedFiltersPage from './pages/Pharmacies/PharmacyAdvancedFiltersPage'
 import PharmacyDetail from './pages/Pharmacies/PharmacyDetail'
 import Visits from './pages/Visits/Visits'
 import VisitReport from './pages/Visits/VisitReport'
@@ -71,6 +72,14 @@ function App() {
               <Routes>
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/pharmacies" element={<Pharmacies />} />
+                <Route
+                  path="/pharmacies/advanced-filters"
+                  element={
+                    <PrivateRoute adminOnly>
+                      <PharmacyAdvancedFiltersPage />
+                    </PrivateRoute>
+                  }
+                />
                 <Route path="/pharmacies/:id" element={<PharmacyDetail />} />
                 <Route path="/visits" element={<Visits />} />
                 <Route path="/visits/report/:visitId" element={<VisitReport />} />

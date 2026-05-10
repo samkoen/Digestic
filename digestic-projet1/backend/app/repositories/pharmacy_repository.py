@@ -14,6 +14,9 @@ from app.domain.pharmacy_table_columns import PHARMACY_SORT_KEYS
 from app.models.pharmacy import Pharmacy
 from app.pagination import offset_for_page, PageResult, normalize_page_input
 from app.repositories.pharmacy_list_filters_extra import apply_extra_pharmacy_filters
+from app.repositories.pharmacy_advanced_filter_engine import (
+    apply_advanced_pharmacy_filter_conditions,
+)
 from app.repositories.pharmacy_list_ordering import order_pharmacy_list
 from app.domain.billing.pharmacy_reduction import normalize_pharmacy_reduction_pct
 
@@ -126,6 +129,7 @@ class PharmacyRepository:
         depot: Optional[str] = None,
         warehouse_id: str | Sequence[str] | None = None,
         restricted_to_commercial_id: Optional[str] = None,
+        advanced_filter_payload: dict | None = None,
     ) -> PageResult[_PharmacyListRow]:
         """Liste paginée : filtres + tri + jointure commercial, le tout côté SQL."""
         p, ps = normalize_page_input(page, page_size)
@@ -212,6 +216,11 @@ class PharmacyRepository:
             depot=depot_name_filter,
             warehouse=w_tbl,
         )
+
+        if advanced_filter_payload:
+            apply_advanced_pharmacy_filter_conditions(
+                conds, p_tbl, advanced_filter_payload
+            )
 
         def _base_count():
             c = (

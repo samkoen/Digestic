@@ -51,6 +51,7 @@ class PharmacyService:
         rib: str | None = None,
         depot: str | None = None,
         warehouse_id: str | Sequence[str] | None = None,
+        advanced_filter_payload: dict | None = None,
     ) -> dict[str, Any]:
         """Liste paginée avec filtres et tri côté base ; commercial limité à ses pharmas."""
         restricted: str | None = None
@@ -79,6 +80,7 @@ class PharmacyService:
             depot=depot,
             warehouse_id=warehouse_id,
             restricted_to_commercial_id=restricted,
+            advanced_filter_payload=advanced_filter_payload,
         )
         items: list[dict] = []
         for row in pr.items:

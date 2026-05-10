@@ -44,6 +44,7 @@ function readExpandedFromStorage(storageKey) {
  * @param {string | null} p.activeSavedFilterId
  * @param {function} p.onSelectSaved
  * @param {function} [p.onActiveFilterRemoved]
+ * @param {() => Record<string, unknown>} [p.getAdditionalSaveBody] — fusionné dans le POST à l’enregistrement
  */
 export function SavedFiltersBar(p) {
   const {
@@ -56,6 +57,7 @@ export function SavedFiltersBar(p) {
     activeSavedFilterId,
     onSelectSaved,
     onActiveFilterRemoved,
+    getAdditionalSaveBody,
   } = p
 
   const [items, setItems] = useState([])
@@ -109,11 +111,14 @@ export function SavedFiltersBar(p) {
     }
     setSaving(true)
     try {
+      const extra =
+        typeof getAdditionalSaveBody === 'function' ? getAdditionalSaveBody() : {}
       await filterClient.create({
         name,
         filters,
         orderBy,
         order,
+        ...extra,
       })
       setDialogOpen(false)
       setSaveName('')

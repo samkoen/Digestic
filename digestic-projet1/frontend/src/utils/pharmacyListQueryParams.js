@@ -61,6 +61,7 @@ export function buildPharmacyListQueryParams({
   orderBy,
   order,
   debouncedFilters: d,
+  advancedFilterId,
 }) {
   const params = {
     page: page + 1,
@@ -109,5 +110,9 @@ export function buildPharmacyListQueryParams({
   }
   if (d.rib) params.rib = d.rib
   if (d.created) params.created = d.created
+  const af = advancedFilterId != null ? String(advancedFilterId).trim() : ''
+  if (af) {
+    params.advanced_filter_id = af
+  }
   return params
 }
