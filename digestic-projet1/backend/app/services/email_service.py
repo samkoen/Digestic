@@ -1,6 +1,12 @@
 """
 Service pour l'envoi d'e-mails — contenu depuis les modèles HTML configurés en base.
-Pour l'instant envoi simulé (journalisation).
+
+Si ``BREVO_API_KEY`` et ``BREVO_SENDER_EMAIL`` sont renseignés et ``BREVO_USE_SIMULATION`` est désactivé,
+les messages sont livrés via Brevo aux destinataires demandés dans l’app.
+
+Si ``BREVO_USE_SIMULATION`` est activé (**tests**), la livraison (API ou simulation) va **exclusivement**
+vers ``BREVO_SANDBOX_RECIPIENT`` (défaut : une adresse de test fixée dans ``app.integrations.brevo.config``), jamais vers l’adresse métier demandée ;
+l’intention métier reste tracée dans les logs pour le débogage.
 """
 from __future__ import annotations
 
@@ -14,6 +20,8 @@ from typing import Any, Sequence
 
 from sqlalchemy.orm import Session
 
+from app.integrations.brevo import BrevoApiError, send_transactional_html_email
+from app.integrations.brevo.config import brevo_credentials_ok, brevo_force_simulation, brevo_sandbox_recipient
 from app.domain.email_template_catalog import (
     TEMPLATE_DELIVERY_NOTE_SEND,
     TEMPLATE_INVOICE_SEND,
@@ -61,7 +69,7 @@ def _money_fr(amount: float | None) -> str:
 
 
 class EmailService:
-    """Construit puis envoie (simulation) les e-mails à partir des modèles admin."""
+    """Construit et envoie les e-mails (Brevo si configuré, sinon simulation/logs)."""
 
     def __init__(self, db: Session):
         self._tpl = EmailTemplateRepository(db)
@@ -248,20 +256,73 @@ class EmailService:
         attachments: Sequence[EmailAttachment] = (),
     ) -> bool:
         try:
+            att_list = list(attachments) if attachments else ()
+            sandbox = brevo_force_simulation()
+            orig_to = (to_email or "").strip()
+            recipient = brevo_sandbox_recipient().strip() if sandbox else orig_to
+
+            use_brevo_api = brevo_credentials_ok()
+
+            if use_brevo_api:
+                try:
+                    resp = send_transactional_html_email(
+                        to_email=recipient,
+                        subject=subject,
+                        html_content=body_html,
+                        attachments=list(att_list) if att_list else None,
+                    )
+                    mid = None
+                    if isinstance(resp, dict):
+                        mid = resp.get("messageId") or resp.get("message_id")
+                    pj_note = ", ".join(_sanitize_attachment_filename(fn, "file.pdf") for _, fn in att_list)
+                    mode = "Brevo sandbox (destinataire forcé)" if sandbox else "Brevo"
+                    extra = ""
+                    if sandbox and orig_to.lower() != recipient.lower():
+                        extra = f"\n  (demande app : {orig_to} → livré uniquement sur le sandbox ci-dessous)\n"
+                    print(
+                        f"\n--- E-mail envoyé via {mode} ({kind})\n"
+                        f"{extra}"
+                        f"  Destinataire : {recipient}\n"
+                        f"  Objet        : {subject}\n"
+                        f"  Pièces joint.: {pj_note or 'aucune'}\n"
+                        f"  Message ID   : {mid or '—'}\n"
+                        "---\n",
+                        flush=True,
+                    )
+                    logger.info(
+                        "[email:brevo %s] orig=%s -> %s sandbox=%s messageId=%s attachments=%s",
+                        kind,
+                        orig_to,
+                        recipient,
+                        sandbox,
+                        mid,
+                        [fn for _, fn in att_list],
+                    )
+                    return True
+                except BrevoApiError as e:
+                    logger.error("[email:brevo] Échec (%s %s→%s): %s", kind, orig_to, recipient, e)
+                    return False
+
             excerpt = body_html[:1200] + (" …[tronqué]" if len(body_html) > 1200 else "")
             att_lines = "".join(
                 f"  Pièce jointe  : {_sanitize_attachment_filename(fn, 'fichier.pdf')} ({len(data)} o)\n"
-                for data, fn in attachments
+                for data, fn in att_list
             )
-            if not attachments:
+            if not att_list:
                 att_lines = "  Pièces jointes : aucune\n"
 
-            mime_msg = _build_multipart_message(subject, to_email, body_html, list(attachments))
-            # MIME prêt pour SMTP ; pour l’instant journalisation uniquement
+            mime_msg = _build_multipart_message(subject, recipient, body_html, list(att_list))
 
+            sandbox_note = (
+                "\n  (demande dans l’app : " + orig_to + " → simulation uniquement pour le sandbox ci-dessus)\n"
+                if sandbox and orig_to.lower() != recipient.lower()
+                else ""
+            )
+            mode_label = "Simulation sandbox" if sandbox else "Simulation — Brevo non configuré"
             print(
-                f"\n--- Simulation e-mail ({kind}) — pas de SMTP —\n"
-                f"  Destinataire : {to_email}\n"
+                f"\n--- {mode_label} e-mail ({kind}) — pas d’API Brevo —\n"
+                f"{sandbox_note}"
+                f"  Destinataire : {recipient}\n"
                 f"  Objet        : {subject}\n"
                 f"{att_lines}"
                 f"  Corps HTML   :\n{excerpt}\n"
@@ -269,9 +330,9 @@ class EmailService:
                 "---\n",
                 flush=True,
             )
-            logger.info("[email:%s] -> %s", kind, to_email)
+            logger.info("[email:simulation %s] orig=%s -> %s", kind, orig_to, recipient)
             logger.info("Sujet: %s", subject)
-            logger.info("Pièces jointes: %s", [a[1] for a in attachments])
+            logger.info("Pièces jointes: %s", [a[1] for a in att_list])
             logger.info("Corps HTML: %s", body_html[:2000])
             return True
         except Exception as e:
