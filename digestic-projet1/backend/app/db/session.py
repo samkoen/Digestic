@@ -9,6 +9,15 @@ _engine = None
 SessionLocal: sessionmaker[Session] | None = None
 
 
+def reset_engine() -> None:
+    """Libère le pool et oublie la factory (tests, ou nouveau ``DATABASE_URL``)."""
+    global _engine, SessionLocal
+    if _engine is not None:
+        _engine.dispose()
+    _engine = None
+    SessionLocal = None
+
+
 def get_engine():
     global _engine, SessionLocal
     if _engine is not None:

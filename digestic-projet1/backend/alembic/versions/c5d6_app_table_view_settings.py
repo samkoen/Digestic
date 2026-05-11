@@ -17,6 +17,11 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    """Crée la table si absente (bases déjà partiellement alignées ou reprise après échec)."""
+    bind = op.get_bind()
+    insp = sa.inspect(bind)
+    if "app_table_view_settings" in insp.get_table_names(schema=None):
+        return
     op.create_table(
         "app_table_view_settings",
         sa.Column("id", sa.Uuid(), nullable=False),
@@ -40,4 +45,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_table("app_table_view_settings")
+    op.execute(sa.text("DROP TABLE IF EXISTS app_table_view_settings"))

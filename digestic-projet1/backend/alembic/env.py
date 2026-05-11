@@ -9,6 +9,8 @@ from dotenv import load_dotenv
 
 backend_dir = Path(__file__).resolve().parents[1]
 load_dotenv(backend_dir / ".env")
+if os.environ.get("DIGESTIC_ENV", "").strip().lower() == "test":
+    load_dotenv(backend_dir / ".env.test", override=True)
 sys.path.insert(0, str(backend_dir))
 
 from app.db.base import Base  # noqa: E402
