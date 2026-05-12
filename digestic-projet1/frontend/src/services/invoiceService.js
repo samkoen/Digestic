@@ -83,6 +83,12 @@ export const invoiceService = {
     return data
   },
 
+  /** Envoi du modèle e-mail « relance facture impayée » (sans pièce jointe). */
+  sendUnpaidReminderEmail: async (id) => {
+    const { data } = await api.post(`/invoices/${id}/send-unpaid-reminder-email`)
+    return data
+  },
+
   /**
    * Télécharge le PDF VosFactures (backend proxy, cookie de session).
    */

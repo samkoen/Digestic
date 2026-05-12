@@ -1,3 +1,4 @@
+from datetime import date
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, Query
@@ -16,6 +17,17 @@ from app.services.invoice_service import InvoiceService
 from app.schemas.email_send import SendTransactionalEmailBody
 
 router = APIRouter()
+
+
+def _calendar_days_after_due(invoice_row) -> int:
+    """Jours après la date d’échéance (0 tant qu’on est au jour même de l’échéance)."""
+    due_raw = getattr(invoice_row, "due_date", None)
+    chunk = str(due_raw or "").strip()[:10]
+    if len(chunk) < 10:
+        raise ValueError("Date d'échéance invalide.")
+    due_d = date.fromisoformat(chunk)
+    today = date.today()
+    return max(0, (today - due_d).days)
 
 
 def get_invoice_service(db: Session = Depends(get_db)) -> InvoiceService:
@@ -325,5 +337,76 @@ def send_invoice_email(
             {"error": "Erreur lors de l'envoi de l'email"},
             status_code=500,
         )
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@router.post("/{invoice_id}/send-unpaid-reminder-email")
+def send_invoice_unpaid_reminder_email(
+    invoice_id: str,
+    service: InvoiceService = Depends(get_invoice_service),
+    db: Session = Depends(get_db),
+):
+    """
+    Envoi automatique du modèle « facture impayée » (relance), sans PJ.
+    Réservé aux factures non soldées dont l'échéance est dépassée.
+    """
+    try:
+        invoice = service.get_invoice_by_id(invoice_id)
+        if not invoice:
+            return JSONResponse({"error": "Facture non trouvée"}, status_code=404)
+
+        st = (invoice.status or "").strip().lower()
+        if st in ("paid", "credited", "cancelled"):
+            return JSONResponse(
+                {"error": "Relance impayée impossible pour une facture payée, annulée ou créditée."},
+                status_code=400,
+            )
+
+        pharmacy_repo = PharmacyRepository(db)
+        pharmacy = pharmacy_repo.find_by_id(invoice.pharmacy_id)
+        if not pharmacy:
+            return JSONResponse({"error": "Pharmacie non trouvée"}, status_code=404)
+        to_email = notification_email_for_pharmacy(pharmacy)
+        if not to_email:
+            return JSONResponse(
+                {"error": "Aucun email enregistré pour cette pharmacie"},
+                status_code=400,
+            )
+
+        days_after = _calendar_days_after_due(invoice)
+        if days_after < 1:
+            return JSONResponse(
+                {
+                    "error": (
+                        "La date d'échéance n'est pas encore dépassée "
+                        "(utilisez « Envoyer la facture » pour un premier envoi)."
+                    ),
+                },
+                status_code=400,
+            )
+
+        email_service = EmailService(db)
+        ok = email_service.send_invoice_unpaid_reminder_email(
+            to_email,
+            pharmacy_name=pharmacy.name or "",
+            invoice_number=invoice.invoice_number,
+            invoice_amount=invoice.amount,
+            invoice_date=invoice.issue_date,
+            due_date=invoice.due_date,
+            days_overdue=days_after,
+        )
+        if ok:
+            return {
+                "message": f"Relance impayée envoyée avec succès à {to_email}",
+                "email": to_email,
+                "days_overdue": days_after,
+            }
+        return JSONResponse(
+            {"error": "Erreur lors de l'envoi du message de relance"},
+            status_code=500,
+        )
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)

@@ -27,13 +27,14 @@ import EmailIcon from '@mui/icons-material/Email'
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong'
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf'
 import PaymentsIcon from '@mui/icons-material/Payments'
+import NotificationsActiveOutlinedIcon from '@mui/icons-material/NotificationsActiveOutlined'
 import { format } from 'date-fns'
 import { creditNoteService } from '../../services/creditNoteService'
 import { invoiceService } from '../../services/invoiceService'
 import IssueTotalCreditNoteDialog from '../InvoiceTable/IssueTotalCreditNoteDialog'
 import MarkInvoicePaidDialog from '../InvoiceTable/MarkInvoicePaidDialog'
 import SendEmailComposerDialog from '../SendEmailComposerDialog/SendEmailComposerDialog'
-import { canIssueTotalCreditNote, canMarkInvoicePaid } from '../../utils/invoiceCreditNoteEligibility'
+import { canIssueTotalCreditNote, canMarkInvoicePaid, canOfferUnpaidReminderAction, canSendUnpaidReminder } from '../../utils/invoiceCreditNoteEligibility'
 
 function formatEuro(n) {
   if (n == null || n === '' || Number.isNaN(Number(n))) return '—'
@@ -54,7 +55,7 @@ function InvoiceDetail({
   const [emailDraftError, setEmailDraftError] = useState(null)
   const [emailComposeSending, setEmailComposeSending] = useState(false)
   const [emailComposeSendError, setEmailComposeSendError] = useState(null)
-  const [emailSent, setEmailSent] = useState(false)
+  const [bannerSuccess, setBannerSuccess] = useState(null)
   const [error, setError] = useState(null)
 
   const [creditNotes, setCreditNotes] = useState([])
@@ -62,6 +63,7 @@ function InvoiceDetail({
   const [issueDialogOpen, setIssueDialogOpen] = useState(false)
   const [markPaidDialogOpen, setMarkPaidDialogOpen] = useState(false)
   const [pdfLoadingCnId, setPdfLoadingCnId] = useState(null)
+  const [unpaidReminderSending, setUnpaidReminderSending] = useState(false)
 
   const loadCreditNotes = useCallback(async () => {
     if (!invoice?.id) return
@@ -117,9 +119,9 @@ function InvoiceDetail({
       try {
         const res = await invoiceService.sendEmail(invoice.id, { subject, body_html })
         if (res?.message || res?.email) {
-          setEmailSent(true)
+          setBannerSuccess(res.message || (res.email ? `Facture envoyée avec succès à ${res.email}` : null))
           setTimeout(() => {
-            setEmailSent(false)
+            setBannerSuccess(null)
           }, 4000)
         }
         resetInvoiceEmailComposer()
@@ -132,10 +134,37 @@ function InvoiceDetail({
     [invoice?.id, resetInvoiceEmailComposer],
   )
 
+  const handleSendUnpaidReminder = useCallback(async () => {
+    if (!invoice?.id) return
+    setError(null)
+    setUnpaidReminderSending(true)
+    try {
+      const res = await invoiceService.sendUnpaidReminderEmail(invoice.id)
+      setBannerSuccess(
+        res?.message ||
+          (res?.email ? `Relance impayée envoyée à ${res.email}` : 'Relance impayée envoyée.'),
+      )
+      if (typeof onInvoicePatched === 'function') {
+        const refreshed = await invoiceService.getById(invoice.id)
+        onInvoicePatched(refreshed)
+      }
+      if (!(res?.message || res?.email)) {
+        console.info('Relance envoyée', res)
+      }
+      setTimeout(() => {
+        setBannerSuccess(null)
+      }, 5000)
+    } catch (err) {
+      setError(err.response?.data?.error || err.message || 'Impossible d’envoyer la relance')
+    } finally {
+      setUnpaidReminderSending(false)
+    }
+  }, [invoice?.id, onInvoicePatched])
+
   useEffect(() => {
     if (!open) {
       resetInvoiceEmailComposer()
-      setEmailSent(false)
+      setBannerSuccess(null)
       setError(null)
     }
   }, [open, resetInvoiceEmailComposer])
@@ -189,6 +218,8 @@ function InvoiceDetail({
 
   const eligibleAvoir = canIssueTotalCreditNote(invoice)
   const eligibleMarkPaid = canMarkInvoicePaid(invoice)
+  const showUnpaidReminder = Boolean(pharmacyEmail?.trim()) && canOfferUnpaidReminderAction(invoice)
+  const unpaidReminderCanSend = showUnpaidReminder && canSendUnpaidReminder(invoice)
 
   const handleDownloadCnPdf = async (cnId) => {
     try {
@@ -212,7 +243,7 @@ function InvoiceDetail({
                 <IconButton
                   color="primary"
                   onClick={() => void openInvoiceEmailComposer()}
-                  disabled={emailSent || emailComposerOpen}
+                  disabled={Boolean(bannerSuccess) || emailComposerOpen}
                   sx={{ ml: 2 }}
                   aria-label="Préparer l'envoi de la facture par e-mail"
                 >
@@ -223,9 +254,9 @@ function InvoiceDetail({
           </Box>
         </DialogTitle>
         <DialogContent>
-          {emailSent && (
+          {bannerSuccess && (
             <Alert severity="success" sx={{ mb: 2 }}>
-              Facture envoyée avec succès à {pharmacyEmail}
+              {bannerSuccess}
             </Alert>
           )}
           {error && (
@@ -275,17 +306,52 @@ function InvoiceDetail({
                     </Grid>
                   )}
                 </Grid>
-                {eligibleMarkPaid && (
-                  <Box sx={{ mt: 2 }}>
-                    <Button
-                      variant="contained"
-                      color="success"
-                      size="small"
-                      startIcon={<PaymentsIcon />}
-                      onClick={() => setMarkPaidDialogOpen(true)}
-                    >
-                      Marquer comme payée
-                    </Button>
+                {(eligibleMarkPaid || showUnpaidReminder) && (
+                  <Box sx={{ mt: 2, display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                    {eligibleMarkPaid && (
+                      <Button
+                        variant="contained"
+                        color="success"
+                        size="small"
+                        startIcon={<PaymentsIcon />}
+                        onClick={() => setMarkPaidDialogOpen(true)}
+                      >
+                        Marquer comme payée
+                      </Button>
+                    )}
+                    {showUnpaidReminder && (
+                      <Tooltip
+                        title={
+                          unpaidReminderCanSend
+                            ? `Modèle admin « Rappel de facture impayée » — ${pharmacyEmail ?? ''}`
+                            : 'Échéance encore à jour : la relance n’est envoyée qu’au moins un jour après l’échéance.'
+                        }
+                      >
+                        <span>
+                          <Button
+                            variant="outlined"
+                            color="warning"
+                            size="small"
+                            startIcon={
+                              unpaidReminderSending ? (
+                                <CircularProgress size={18} color="inherit" />
+                              ) : (
+                                <NotificationsActiveOutlinedIcon />
+                              )
+                            }
+                            onClick={() => void handleSendUnpaidReminder()}
+                            disabled={
+                              Boolean(bannerSuccess) ||
+                              unpaidReminderSending ||
+                              emailComposerOpen ||
+                              !unpaidReminderCanSend
+                            }
+                          >
+                            Relance impayée (e-mail)
+                          </Button>
+                        </span>
+                      </Tooltip>
+                    )}
                   </Box>
                 )}
               </CardContent>

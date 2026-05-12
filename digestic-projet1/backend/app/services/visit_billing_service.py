@@ -14,11 +14,14 @@ from app.db import mappers as mp
 from app.domain.billing.delivery_note_number import new_digestic_bl_number
 from app.models.delivery_note import DeliveryNote
 from app.repositories.delivery_note_repository import DeliveryNoteRepository
+from app.repositories.invoice_repository import InvoiceRepository
+from app.repositories.pharmacy_repository import PharmacyRepository
 from app.repositories.product_repository import get_default_billing_product_row
 from app.services.billing_stock_service import (
     apply_deposit_to_pharmacy,
     apply_return_from_pharmacy,
 )
+from app.services.delivery_note_service import DeliveryNoteService
 
 
 class VisitBillingOrchestrator:
@@ -97,6 +100,14 @@ class VisitBillingOrchestrator:
             deposit_orm.status = bl_status
             deposit_orm.validated_at = datetime.now(timezone.utc)
             self._db.flush()
+
+            dn_svc = DeliveryNoteService(
+                self._delivery_repo,
+                InvoiceRepository(self._db),
+                PharmacyRepository(self._db),
+                self._db,
+            )
+            dn_svc.try_auto_send_delivery_note_email(saved_dn.id)
 
         if returns_qty > 0:
             p_orm = self._db.get(orm.Pharmacy, mp.parse_uuid(report.pharmacy_id))

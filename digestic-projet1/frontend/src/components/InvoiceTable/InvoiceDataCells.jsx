@@ -14,6 +14,8 @@ import DownloadIcon from '@mui/icons-material/Download'
 import EmailOutlinedIcon from '@mui/icons-material/EmailOutlined'
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong'
 import PaymentsIcon from '@mui/icons-material/Payments'
+import NotificationsActiveOutlinedIcon from '@mui/icons-material/NotificationsActiveOutlined'
+import { canOfferUnpaidReminderAction, canSendUnpaidReminder } from '../../utils/invoiceCreditNoteEligibility'
 import { AlignedTableCell } from '../ResizableTableColumns/ResizableHeaderCell'
 import InvoiceCreditNoteBadge from './InvoiceCreditNoteBadge'
 
@@ -44,7 +46,7 @@ function getStatusLabel(status) {
 /**
  * @param {object} p
  * @param {object} p.invoice — to_dict + pharmacy_name
- * @param {object} p.ctx — formatDate, canDownloadVosFacturesPdf, canIssueTotalCreditNote, requestIssueCreditNote, handleDownloadPdf, pdfLoadingId, navigateToPharmacy, pharmacyMap, handleOpenInvoiceEmailComposer, invEmailBusyRowId, invEmailOpen
+ * @param {object} p.ctx — formatDate, canDownloadVosFacturesPdf, canIssueTotalCreditNote, canMarkInvoicePaid, requestIssueCreditNote, requestMarkPaid, handleDownloadPdf, pdfLoadingId, navigateToPharmacy, pharmacyMap, handleOpenInvoiceEmailComposer, invEmailBusyRowId, invEmailOpen, invReminderSendingId, handleSendInvoiceUnpaidReminder
  */
 export function InvoiceTableBodyCell(p) {
   const { columnKey, invoice, fullWidths, ctx } = p
@@ -222,7 +224,10 @@ export function InvoiceActionsCell({ invoice, fullWidths, ctx }) {
     typeof ctx.canIssueTotalCreditNote === 'function' && ctx.canIssueTotalCreditNote(invoice)
   const markPaidOk =
     typeof ctx.canMarkInvoicePaid === 'function' && ctx.canMarkInvoicePaid(invoice)
-  const hasActions = pdfOk || avoirOk || markPaidOk || mailOk
+  const showReminderAction = mailOk && canOfferUnpaidReminderAction(invoice)
+  const reminderSendOk = showReminderAction && canSendUnpaidReminder(invoice)
+  const reminderBusy = ctx.invReminderSendingId === invoice.id
+  const hasActions = pdfOk || avoirOk || markPaidOk || mailOk || showReminderAction
   return (
     <TableCell
       align="right"
@@ -281,6 +286,35 @@ export function InvoiceActionsCell({ invoice, fullWidths, ctx }) {
                     <CircularProgress color="inherit" size={22} />
                   ) : (
                     <EmailOutlinedIcon fontSize="small" />
+                  )}
+                </IconButton>
+              </span>
+            </Tooltip>
+          )}
+          {showReminderAction && typeof ctx.handleSendInvoiceUnpaidReminder === 'function' && (
+            <Tooltip
+              title={
+                reminderSendOk
+                  ? 'Relance impayée (modèle e-mail sans pièce jointe)'
+                  : 'Relance : actif lorsque la date d’échéance est dépassée d’au moins un jour (comme pour l’envoi serveur).'
+              }
+            >
+              <span>
+                <IconButton
+                  size="small"
+                  color="warning"
+                  disabled={
+                    reminderBusy ||
+                    !!ctx.invEmailOpen ||
+                    !reminderSendOk
+                  }
+                  aria-label={`Relance impayée pour ${invoice.invoice_number}`}
+                  onClick={() => void ctx.handleSendInvoiceUnpaidReminder(invoice)}
+                >
+                  {reminderBusy ? (
+                    <CircularProgress color="inherit" size={22} />
+                  ) : (
+                    <NotificationsActiveOutlinedIcon fontSize="small" />
                   )}
                 </IconButton>
               </span>

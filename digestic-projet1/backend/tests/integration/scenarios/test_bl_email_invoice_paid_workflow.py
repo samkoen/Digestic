@@ -1,11 +1,10 @@
 """
-Scénario : envoi BL par e-mail, facturation, encaissement.
+Scénario : envoi BL par e-mail (automatique à la création), facturation, encaissement.
 
 Marqueur : ``integration`` (nécessite ``DATABASE_URL`` / ``.env.test``).
 
-Note produit : la création ``POST .../standalone`` ne envoie pas l’e-mail seule ;
-l’envoi transactionnel passe par ``POST .../send-email`` (le service appelle ensuite
-``EmailService.send_delivery_note_email`` et marque le bon comme envoyé).
+À la création ``POST .../standalone``, l’e-mail part automatiquement lorsqu’une adresse
+de notification existe ; le renvoi manuel reste possible via ``POST .../send-email``.
 """
 
 from __future__ import annotations
@@ -47,18 +46,18 @@ def test_uc_bl_fac_01_email_bl_invoice_then_mark_paid(
       - session admin
 
     Étapes métier:
-      1. Créer un BL standalone (statut initial facturable : pending)
-      2. Envoyer le BL par e-mail (route transactionnelle ``POST …/send-email``)
+      1. Créer un BL standalone (statut initial facturable : pending) — e-mail auto
+      2. (Optionnel) renvoyer / confirmer envoi via ``POST …/send-email``
       3. Émettre la facture depuis le BL (``POST …/facturer``)
       4. Marquer la facture payée (``POST /api/invoices/{id}/mark-paid``)
 
     Résultat attendu:
-      - Après (2) : ``email_sent`` vrai, statut BL ``sent`` (si pas dépôt-vente)
+      - Après (1) : ``email_sent`` vrai, statut BL ``sent`` (si pas dépôt-vente)
       - Après (3) : facture en ``pending``, BL ``fully_invoiced`` (facturation totale)
       - Après (4) : facture ``paid``, ``payment_date`` renseignée
 
     Attendus vérifiés dans le test:
-      - Un appel à ``EmailService.send_delivery_note_email`` (preuve envoi BL)
+      - Au moins un appel à ``EmailService.send_delivery_note_email``
       - Statuts cohérents sur réponses API et GET ressources
     ---------------------------------------------------------------------------
     """
@@ -117,16 +116,17 @@ def test_uc_bl_fac_01_email_bl_invoice_then_mark_paid(
     assert cr.status_code == 201, cr.text
     bl_body = cr.json()
     bl_id = bl_body["id"]
-    assert bl_body.get("email_sent") is False
-    assert bl_body.get("status") == "pending"
+    assert bl_body.get("email_sent") is True
+    assert bl_body.get("status") == "sent"
+    assert len(bl_mail_log) == 1
+    assert "@test.digestic.local" in bl_mail_log[0]["to_email"]
 
     mail = api_client.post(f"/api/delivery-notes/{bl_id}/send-email", json={})
     assert mail.status_code == 200, mail.text
     mail_payload = mail.json()
     assert mail_payload.get("delivery_note", {}).get("email_sent") is True
     assert mail_payload.get("delivery_note", {}).get("status") == "sent"
-    assert len(bl_mail_log) == 1
-    assert "@test.digestic.local" in bl_mail_log[0]["to_email"]
+    assert len(bl_mail_log) == 2
 
     gr = api_client.get(f"/api/delivery-notes/{bl_id}")
     assert gr.status_code == 200

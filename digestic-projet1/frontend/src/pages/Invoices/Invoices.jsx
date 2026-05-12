@@ -109,6 +109,7 @@ function Invoices() {
   const [invEmailDraftError, setInvEmailDraftError] = useState(null)
   const [invEmailSending, setInvEmailSending] = useState(false)
   const [invEmailSendError, setInvEmailSendError] = useState(null)
+  const [invReminderSendingId, setInvReminderSendingId] = useState(null)
   const tableWidthRef = useRef(1200)
   const colResizeObserverRef = useRef(null)
   const navigate = useNavigate()
@@ -498,6 +499,29 @@ function Invoices() {
     [invEmailInvoiceId, loadData, notify, resetInvEmailComposer],
   )
 
+  const handleSendInvoiceUnpaidReminder = useCallback(
+    async (inv) => {
+      if (!inv?.id || inv.row_kind === 'credit_note') {
+        return
+      }
+      setInvReminderSendingId(inv.id)
+      try {
+        const res = await invoiceService.sendUnpaidReminderEmail(inv.id)
+        void loadData()
+        notify(res.message || (res.email ? `Relance envoyée à ${res.email}` : 'Relance envoyée.'), 'success')
+      } catch (e) {
+        console.error(e)
+        notify(
+          e?.response?.data?.error || e.message || 'Impossible d’envoyer la relance.',
+          'error',
+        )
+      } finally {
+        setInvReminderSendingId(null)
+      }
+    },
+    [loadData, notify],
+  )
+
   const invEmailBusyRowId =
     invEmailDraftLoading || invEmailSending ? invEmailInvoiceId : null
 
@@ -516,6 +540,8 @@ function Invoices() {
       handleOpenInvoiceEmailComposer,
       invEmailBusyRowId,
       invEmailOpen,
+      invReminderSendingId,
+      handleSendInvoiceUnpaidReminder,
     }),
     [
       navigateToPharmacy,
@@ -528,6 +554,8 @@ function Invoices() {
       invEmailOpen,
       canIssueTotalCreditNote,
       canMarkInvoicePaid,
+      invReminderSendingId,
+      handleSendInvoiceUnpaidReminder,
     ],
   )
 

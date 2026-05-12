@@ -61,7 +61,9 @@ class DeliveryNoteService:
             raise ValueError("visit_report_id est obligatoire pour créer un bon de livraison.")
         note_data["id"] = str(uuid.uuid4())
         note = DeliveryNote.from_dict(note_data)
-        return self.repository.create(note)
+        saved = self.repository.create(note)
+        self.try_auto_send_delivery_note_email(saved.id)
+        return saved
 
     def create_standalone_delivery_note_admin(self, payload: dict[str, Any]) -> DeliveryNote:
         """Bon sans rapport : réservé admin (route dédiée), même logique stock que après rapport."""
@@ -169,7 +171,9 @@ class DeliveryNoteService:
         deposit_orm.status = bl_status
         deposit_orm.validated_at = datetime.now(timezone.utc)
         self._db.flush()
-        return mp.deposit_orm_to_note(deposit_orm)
+        out = mp.deposit_orm_to_note(deposit_orm)
+        self.try_auto_send_delivery_note_email(out.id)
+        return out
 
     def cancel_delivery_note_admin(self, note_id: str, admin_user_id: str) -> DeliveryNote:
         """Annule un BL non facturé : statut « cancelled », retour stock si des quantités avaient été expédiées."""
@@ -320,6 +324,20 @@ class DeliveryNoteService:
         if (existing.status or "").strip() != "depot-vente":
             payload["status"] = "sent"
         return self.update_delivery_note(note_id, payload)
+
+    def try_auto_send_delivery_note_email(self, note_id: str) -> None:
+        """
+        Après création d'un bon : envoi automatique à l'e-mail de notification de la pharmacie.
+        N'élève pas d'exception (journal uniquement si pas d'e-mail ou échec d'envoi).
+        """
+        try:
+            self.send_delivery_note_email_to_pharmacy(note_id)
+        except ValueError as e:
+            logger.info("Envoi BL automatique ignoré (bon %s) : %s", note_id, e)
+        except RuntimeError as e:
+            logger.warning("Échec envoi BL automatique (bon %s) : %s", note_id, e)
+        except Exception:
+            logger.exception("Erreur inattendue envoi BL automatique (bon %s)", note_id)
 
     def get_delivery_note_email_draft(self, note_id: str) -> dict[str, Any]:
         """Brouillon (destinataire + objet + HTML) depuis le modèle admin, sans envoyer ni modifier le bon."""
