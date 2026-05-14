@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react'
+import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import {
   Box,
@@ -23,6 +23,13 @@ import {
   TextField,
   InputAdornment,
   Avatar,
+  FormControl,
+  InputLabel,
+  Select,
+  OutlinedInput,
+  FormGroup,
+  FormControlLabel,
+  Checkbox,
 } from '@mui/material'
 import { format, startOfWeek, endOfWeek, eachDayOfInterval, isSameDay, parseISO } from 'date-fns'
 import { fr } from 'date-fns/locale'
@@ -30,14 +37,32 @@ import VisibilityIcon from '@mui/icons-material/Visibility'
 import RouteIcon from '@mui/icons-material/Route'
 import EventRepeatIcon from '@mui/icons-material/EventRepeat'
 import CalendarTodayIcon from '@mui/icons-material/CalendarToday'
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
 import { visitService } from '../../services/visitService'
 import { pharmacyService } from '../../services/pharmacyService'
 import { userService } from '../../services/userService'
 import { visitReportService } from '../../services/visitReportService'
+import { authService } from '../../services/authService'
+import { planningService } from '../../services/planningService'
+import { useNotifier } from '../../hooks/useNotifier'
+
+/** Prépare PUT pharmacie : vide la prochaine visite ; retire le RDV fixe s’il tombait ce jour. */
+function buildClearPlanningDayPayload(pharmacy, dayIso) {
+  const payload = {
+    next_visit_date: null,
+    planning_manual_override: false,
+  }
+  const h = pharmacy?.planning_hard_rdv_date
+  if (h && String(h).trim().slice(0, 10) === dayIso) {
+    payload.planning_hard_rdv_date = null
+  }
+  return payload
+}
 
 function Planning() {
   const location = useLocation()
   const navigate = useNavigate()
+  const { notify, dismiss, NotifierSnackbar } = useNotifier()
   const [loading, setLoading] = useState(true)
   // Récupérer le tabValue depuis location.state, sinon par défaut 0 (Aujourd'hui)
   const [tabValue, setTabValue] = useState(location.state?.tabValue ?? 0) // 0: Aujourd'hui, 1: Jour, 2: Semaine
@@ -55,9 +80,42 @@ function Planning() {
   const [newVisitDateISO, setNewVisitDateISO] = useState('')
   const dateInputRef = useRef(null)
 
+  const [currentUser, setCurrentUser] = useState(null)
+  const [planningDialogOpen, setPlanningDialogOpen] = useState(false)
+  const [planningHorizon, setPlanningHorizon] = useState(7)
+  const [planningBusy, setPlanningBusy] = useState(false)
+  /**
+   * Admin — filtre d’affichage de la grille : null = tous ; [] = aucun ; sinon liste d’UUID.
+   * Non pertinent pour le rôle commercial (filtré côté liste sur `currentUser.id`).
+   */
+  const [adminVisibleCommercialIds, setAdminVisibleCommercialIds] = useState(null)
+  /**
+   * Admin — périmètre dans le dialogue de recalcul : null = tous les commerciaux ; liste explicite = sous-ensemble ; [] invalide avant envoi.
+   */
+  const [planningDialogCommercialIds, setPlanningDialogCommercialIds] = useState(null)
+  /** Suppression massive du planning pour un jour civile donné */
+  const [clearingPlanningDay, setClearingPlanningDay] = useState(false)
+
   useEffect(() => {
     fetchData()
   }, [selectedDate, tabValue])
+
+  useEffect(() => {
+    let cancelled = false
+    authService
+      .getCurrentUser()
+      .then((data) => {
+        // GET /auth/me renvoie { user: { id, role, ... } }, pas le user à la racine
+        const u = data?.user ?? data ?? null
+        if (!cancelled) setCurrentUser(u)
+      })
+      .catch(() => {
+        if (!cancelled) setCurrentUser(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
   
   // Réinitialiser le tabValue et la date sélectionnée si on vient d'une autre page avec un state
   useEffect(() => {
@@ -178,6 +236,96 @@ function Planning() {
     return commercial ? `${commercial.first_name} ${commercial.last_name}` : commercialId
   }
 
+  const sortedCommercialsForFilter = useMemo(
+    () =>
+      [...commercials].sort((a, b) =>
+        `${a.first_name || ''} ${a.last_name || ''}`.localeCompare(
+          `${b.first_name || ''} ${b.last_name || ''}`,
+          'fr',
+          { sensitivity: 'base' },
+        ),
+      ),
+    [commercials],
+  )
+
+  const visiblePlanningItems = useMemo(() => {
+    const list = pharmaciesWithNextVisit
+    const role = (currentUser?.role ?? '').toString().toLowerCase().trim()
+
+    if (role === 'commercial' && currentUser?.id) {
+      return list.filter((item) => String(item.commercialId) === String(currentUser.id))
+    }
+
+    if (role === 'admin') {
+      if (adminVisibleCommercialIds === null) {
+        return list
+      }
+      return list.filter((item) =>
+        adminVisibleCommercialIds.includes(String(item.commercialId)),
+      )
+    }
+
+    return list
+  }, [pharmaciesWithNextVisit, currentUser?.role, currentUser?.id, adminVisibleCommercialIds])
+
+  const isAdminCommercialFilterChecked = useCallback(
+    (commercialUuid) => {
+      const sid = String(commercialUuid)
+      if (adminVisibleCommercialIds === null) return true
+      return adminVisibleCommercialIds.includes(sid)
+    },
+    [adminVisibleCommercialIds],
+  )
+
+  const toggleAdminCommercialFilter = useCallback(
+    (commercialUuid) => {
+      const sid = String(commercialUuid)
+      setAdminVisibleCommercialIds((prev) => {
+        const allIds = sortedCommercialsForFilter.map((c) => String(c.id))
+        const currentSet = new Set(prev === null ? allIds : prev)
+        if (currentSet.has(sid)) {
+          currentSet.delete(sid)
+        } else {
+          currentSet.add(sid)
+        }
+        return Array.from(currentSet)
+      })
+    },
+    [sortedCommercialsForFilter],
+  )
+
+  const openPlanningDialog = useCallback(() => {
+    const role = (currentUser?.role ?? '').toString().toLowerCase().trim()
+    if (role === 'admin') {
+      const allIds = sortedCommercialsForFilter.map((c) => String(c.id))
+      if (adminVisibleCommercialIds === null) {
+        setPlanningDialogCommercialIds(null)
+      } else {
+        const filtered = adminVisibleCommercialIds.filter((id) => allIds.includes(id))
+        setPlanningDialogCommercialIds(filtered.length ? filtered : [])
+      }
+    }
+    setPlanningDialogOpen(true)
+  }, [currentUser?.role, adminVisibleCommercialIds, sortedCommercialsForFilter])
+
+  const handlePlanningDialogCommercialChange = useCallback(
+    (e) => {
+      const ALL = sortedCommercialsForFilter.map((c) => String(c.id))
+      const raw = e.target.value
+      const next = typeof raw === 'string' ? raw.split(',') : [...raw].map(String)
+      if (!next.length) {
+        setPlanningDialogCommercialIds([])
+        return
+      }
+      const allSelected =
+        ALL.length > 0 &&
+        ALL.length === next.length &&
+        ALL.every((id) => next.includes(id))
+      setPlanningDialogCommercialIds(allSelected ? null : next)
+    },
+    [sortedCommercialsForFilter],
+  )
+
   const formatTime = (dateString) => {
     if (!dateString) return '-'
     try {
@@ -207,6 +355,39 @@ function Planning() {
   const getPhotoPreviewUrl = (pharmacy, size = 64) => {
     const seed = encodeURIComponent(pharmacy.id ?? pharmacy.name ?? 'pharmacy-photo')
     return pharmacy.photo_url || `https://picsum.photos/seed/${seed}/${size}/${size}`
+  }
+
+  /** Pop-ups bloquées : proposer l’ouverture dans le même onglet (snackbar avec actions). */
+  const promptOpenMapsInThisTab = (url) => {
+    notify(
+      'Les fenêtres pop-up sont bloquées ou indisponibles. Ouvrir l’itinéraire Google Maps dans cet onglet ?',
+      'warning',
+      {
+        action: (
+          <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center', flexShrink: 0 }}>
+            <Button color="inherit" size="small" onClick={() => dismiss()}>
+              Annuler
+            </Button>
+            <Button
+              color="inherit"
+              size="small"
+              variant="outlined"
+              sx={{
+                borderColor: 'rgba(255,255,255,0.65)',
+                color: 'inherit',
+                '&:hover': { borderColor: 'rgba(255,255,255,0.9)' },
+              }}
+              onClick={() => {
+                dismiss()
+                window.location.href = url
+              }}
+            >
+              Ouvrir ici
+            </Button>
+          </Box>
+        ),
+      },
+    )
   }
 
   // Génère un itinéraire Google Maps pour toutes les pharmacies affichées
@@ -250,7 +431,10 @@ function Planning() {
       console.log('Pharmacies avec coordonnées ou adresse:', pharmaciesWithCoords.length)
       
       if (pharmaciesWithCoords.length === 0) {
-        alert('Aucune pharmacie avec coordonnées géographiques ou adresse complète trouvée pour générer l\'itinéraire.')
+        notify(
+          'Aucune pharmacie avec coordonnées géographiques ou adresse complète trouvée pour générer l’itinéraire.',
+          'warning',
+        )
         setRouteMenuAnchor(null)
         return
       }
@@ -268,7 +452,7 @@ function Planning() {
         console.log('URL Google Maps (1 pharmacie):', url)
         const newWindow = window.open(url, '_blank')
         if (!newWindow) {
-          alert('Veuillez autoriser les popups pour ouvrir Google Maps.')
+          promptOpenMapsInThisTab(url)
         }
         setRouteMenuAnchor(null)
         return
@@ -389,7 +573,10 @@ function Planning() {
           formatLocation(item.pharmacy)
         ).join('|')
         url = `https://www.google.com/maps/dir/?api=1&waypoints=${limitedWaypoints}&destination=${destination}&travelmode=${travelMode}`
-        alert(`Attention: Google Maps limite à 25 points. L'itinéraire inclura les 25 premières pharmacies sur ${optimizedRoute.length}.`)
+        notify(
+          `Google Maps limite à 25 points : seules les 25 premières pharmacies sur ${optimizedRoute.length} sont incluses dans l’itinéraire.`,
+          'warning',
+        )
       }
       
       console.log('URL Google Maps:', url)
@@ -398,7 +585,7 @@ function Planning() {
       
       // Vérifier que l'URL est valide
       if (!url || url.length === 0) {
-        alert('Erreur: Impossible de générer l\'URL de l\'itinéraire.')
+        notify('Impossible de générer l’URL de l’itinéraire.', 'error')
         setRouteMenuAnchor(null)
         return
       }
@@ -407,22 +594,16 @@ function Planning() {
       try {
         const newWindow = window.open(url, '_blank', 'noopener,noreferrer')
         if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
-          // Popup bloquée, essayer de rediriger dans le même onglet
-          if (confirm('Les popups sont bloquées. Voulez-vous ouvrir l\'itinéraire dans cet onglet ?')) {
-            window.location.href = url
-          }
+          promptOpenMapsInThisTab(url)
         }
       } catch (error) {
         console.error('Erreur lors de l\'ouverture de la fenêtre:', error)
-        // Essayer de rediriger dans le même onglet
-        if (confirm('Impossible d\'ouvrir un nouvel onglet. Voulez-vous ouvrir l\'itinéraire dans cet onglet ?')) {
-          window.location.href = url
-        }
+        promptOpenMapsInThisTab(url)
       }
       setRouteMenuAnchor(null)
     } catch (error) {
       console.error('Erreur lors de la génération de l\'itinéraire:', error)
-      alert('Erreur lors de la génération de l\'itinéraire. Veuillez réessayer.')
+      notify('Erreur lors de la génération de l’itinéraire. Veuillez réessayer.', 'error')
       setRouteMenuAnchor(null)
     }
   }
@@ -450,15 +631,81 @@ function Planning() {
     navigate(`/pharmacies/${pharmacyId}`, { state })
   }
 
+  const handlePlanningRun = async (dryRun) => {
+    const hz = Math.min(60, Math.max(1, Number(planningHorizon) || 7))
+    const role = (currentUser?.role ?? '').toString().toLowerCase().trim()
+    if (role === 'admin') {
+      if (!sortedCommercialsForFilter.length) {
+        notify('Aucun commercial disponible pour le planning.', 'warning')
+        return
+      }
+      if (Array.isArray(planningDialogCommercialIds) && planningDialogCommercialIds.length === 0) {
+        notify(
+          'Sélectionnez au moins un commercial dans la liste déroulante du recalcul.',
+          'warning',
+        )
+        return
+      }
+    }
+    try {
+      setPlanningBusy(true)
+      const payload = {
+        horizon_days: hz,
+        dry_run: dryRun,
+        pharmacy_status_actif_only: true,
+      }
+      if (
+        role === 'admin' &&
+        planningDialogCommercialIds !== null &&
+        planningDialogCommercialIds.length > 0
+      ) {
+        payload.commercial_ids = planningDialogCommercialIds
+      }
+      const res = await planningService.run(payload)
+      if (dryRun) {
+        const n = res.planned_count ?? 0
+        const sk = res.skipped_manual_override_count ?? 0
+        notify(
+          `Prévisualisation : ${n} pharmacie(s) replanifiée(s) (hors ${sk} en ajustement manuel). Détails dans la console (F12).`,
+          'info',
+        )
+        console.info('Planning preview', res)
+      } else {
+        notify(
+          `Planning appliqué : ${res.updated_count ?? 0} date(s) mise(s) à jour. ${res.skipped_manual_override_count ?? 0} fiche(s) ignorée(s) (verrou manuel).`,
+          'success',
+        )
+        await fetchData()
+      }
+      if (!dryRun) setPlanningDialogOpen(false)
+    } catch (e) {
+      console.error(e)
+      const d = e?.response?.data?.detail
+      let msg
+      if (Array.isArray(d)) {
+        msg = d.map((x) => x.msg || JSON.stringify(x)).join(' ; ')
+      } else if (typeof d === 'string') {
+        msg = d
+      } else if (d && typeof d === 'object') {
+        msg = JSON.stringify(d)
+      } else {
+        msg = e?.message || 'Erreur inconnue'
+      }
+      notify(msg, 'error')
+    } finally {
+      setPlanningBusy(false)
+    }
+  }
+
   const handleReplanifyClick = (item, e) => {
     e.stopPropagation()
     setSelectedPharmacyForReplanify(item)
     // Convertir la date actuelle en format dd/MM/yyyy pour l'affichage
-    const currentDate = item.nextVisitDate 
+    const currentDate = item.nextVisitDate
       ? format(new Date(item.nextVisitDate), 'dd/MM/yyyy')
       : format(new Date(), 'dd/MM/yyyy')
     // Convertir aussi en format ISO pour l'input date
-    const currentDateISO = item.nextVisitDate 
+    const currentDateISO = item.nextVisitDate
       ? format(new Date(item.nextVisitDate), 'yyyy-MM-dd')
       : format(new Date(), 'yyyy-MM-dd')
     setNewVisitDate(currentDate)
@@ -512,19 +759,21 @@ function Planning() {
       // Utiliser directement la date ISO de l'input date
       const dateObj = new Date(newVisitDateISO + 'T00:00:00')
       if (isNaN(dateObj.getTime())) {
-        alert('Date invalide. Veuillez vérifier la date saisie.')
+        notify('Date invalide. Veuillez vérifier la date saisie.', 'warning')
         return
       }
-      
+
       await pharmacyService.update(selectedPharmacyForReplanify.pharmacy.id, {
-        next_visit_date: dateObj.toISOString()
+        next_visit_date: dateObj.toISOString(),
+        planning_manual_override: true,
       })
       // Rafraîchir les données
       await fetchData()
       handleReplanifyClose()
+      notify('Date de prochaine visite mise à jour.', 'success')
     } catch (error) {
       console.error('Error updating visit date:', error)
-      alert('Erreur lors de la mise à jour de la date de visite')
+      notify('Erreur lors de la mise à jour de la date de visite.', 'error')
     }
   }
 
@@ -557,11 +806,74 @@ function Planning() {
   }
 
   const getPharmaciesForDate = (date) => {
-    return pharmaciesWithNextVisit.filter(item => {
+    return visiblePlanningItems.filter((item) => {
       if (!item.nextVisitDate) return false
       const visitDate = new Date(item.nextVisitDate)
       return isSameDay(visitDate, date)
     })
+  }
+
+  const executeClearPlanningForDay = async (items, dayDate) => {
+    const dayIso = format(dayDate, 'yyyy-MM-dd')
+    setClearingPlanningDay(true)
+    try {
+      await Promise.all(
+        items.map((item) =>
+          pharmacyService.update(item.pharmacy.id, buildClearPlanningDayPayload(item.pharmacy, dayIso)),
+        ),
+      )
+      notify(
+        `Planning du ${format(dayDate, 'dd/MM/yyyy')} effacé pour ${items.length} pharmacie${items.length > 1 ? 's' : ''}.`,
+        'success',
+      )
+      await fetchData()
+    } catch (e) {
+      console.error(e)
+      notify('Erreur lors de la suppression du planning pour ce jour.', 'error')
+    } finally {
+      setClearingPlanningDay(false)
+    }
+  }
+
+  const promptClearPlanningForDay = (dayDate) => {
+    const items = getPharmaciesForDate(dayDate)
+    if (items.length === 0) {
+      notify('Aucune visite planifiée ce jour.', 'info')
+      return
+    }
+    const n = items.length
+    const dayLabel = format(dayDate, 'EEEE dd/MM/yyyy', { locale: fr })
+    notify(
+      `Retirer la prochaine visite pour ${n} pharmacie${n > 1 ? 's' : ''} (${dayLabel}) ? ` +
+        'Les dates seront réinitialisées ; un éventuel jour de RDV fixe tombant ce jour sera aussi retiré.',
+      'warning',
+      {
+        action: (
+          <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center', flexShrink: 0 }}>
+            <Button color="inherit" size="small" onClick={() => dismiss()}>
+              Annuler
+            </Button>
+            <Button
+              color="inherit"
+              size="small"
+              variant="outlined"
+              sx={{
+                borderColor: 'rgba(255,255,255,0.65)',
+                color: 'inherit',
+                '&:hover': { borderColor: 'rgba(255,255,255,0.9)' },
+              }}
+              disabled={clearingPlanningDay}
+              onClick={() => {
+                dismiss()
+                void executeClearPlanningForDay(items, dayDate)
+              }}
+            >
+              Confirmer
+            </Button>
+          </Box>
+        ),
+      },
+    )
   }
 
   const renderTodayView = () => {
@@ -576,7 +888,20 @@ function Planning() {
     }
 
     return (
-      <Grid container spacing={2} sx={{ mt: 2 }}>
+      <Box>
+        <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
+          <Button
+            size="small"
+            color="error"
+            variant="outlined"
+            startIcon={<DeleteOutlineIcon />}
+            disabled={clearingPlanningDay}
+            onClick={() => promptClearPlanningForDay(new Date())}
+          >
+            Effacer le planning du jour
+          </Button>
+        </Box>
+      <Grid container spacing={2} sx={{ mt: 0 }}>
         {todayPharmacies.map((item) => (
           <Grid item xs={12} sm={6} md={4} key={item.pharmacy.id}>
             <Card
@@ -666,6 +991,7 @@ function Planning() {
           </Grid>
         ))}
       </Grid>
+      </Box>
     )
   }
 
@@ -674,7 +1000,17 @@ function Planning() {
     
     return (
       <Box>
-        <Box sx={{ mb: 3 }}>
+        <Box
+          sx={{
+            mb: 3,
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 2,
+          }}
+        >
+          <Box>
           <Typography variant="body1" gutterBottom>
             Sélectionner une date
           </Typography>
@@ -689,6 +1025,21 @@ function Planning() {
               borderRadius: '4px',
             }}
           />
+          </Box>
+          {dayPharmacies.length > 0 ? (
+            <Tooltip title={`Retire la prochaine visite pour les ${dayPharmacies.length} pharmacie(s) affichée(s) ce jour`}>
+              <Button
+                size="small"
+                color="error"
+                variant="outlined"
+                startIcon={<DeleteOutlineIcon />}
+                disabled={clearingPlanningDay}
+                onClick={() => promptClearPlanningForDay(selectedDate)}
+              >
+                Effacer cette journée
+              </Button>
+            </Tooltip>
+          ) : null}
         </Box>
 
         {dayPharmacies.length === 0 ? (
@@ -828,12 +1179,36 @@ function Planning() {
               <Grid item xs={12} md={6} lg={4} key={day.toISOString()}>
                 <Card sx={{ height: '100%', border: isToday ? '2px solid #1976d2' : 'none' }}>
                   <CardContent>
-                    <Typography variant="h6" gutterBottom>
-                      {format(day, 'EEEE dd/MM', { locale: fr })}
-                      {isToday && (
-                        <Chip label="Aujourd'hui" size="small" color="primary" sx={{ ml: 1 }} />
-                      )}
-                    </Typography>
+                    <Box
+                      display="flex"
+                      justifyContent="space-between"
+                      alignItems="flex-start"
+                      gap={1}
+                      sx={{ mb: dayPharmacies.length === 0 ? 0 : 2 }}
+                    >
+                      <Typography variant="h6" component="div" sx={{ flex: 1 }}>
+                        {format(day, 'EEEE dd/MM', { locale: fr })}
+                        {isToday ? (
+                          <Chip label="Aujourd'hui" size="small" color="primary" sx={{ ml: 1 }} />
+                        ) : null}
+                      </Typography>
+                      {dayPharmacies.length > 0 ? (
+                        <Tooltip title="Effacer les prochaines visites prévues ce jour (pharmacies affichées)">
+                          <IconButton
+                            size="small"
+                            color="error"
+                            aria-label={`Effacer le planning du ${format(day, 'yyyy-MM-dd')}`}
+                            disabled={clearingPlanningDay}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              promptClearPlanningForDay(day)
+                            }}
+                          >
+                            <DeleteOutlineIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      ) : null}
+                    </Box>
                     
                     {dayPharmacies.length === 0 ? (
                       <Typography variant="body2" color="text.secondary">
@@ -944,13 +1319,29 @@ function Planning() {
     )
   }
 
+  const planningUserRole = (currentUser?.role ?? '').toString().toLowerCase().trim()
+  const canUseAutoPlanning =
+    planningUserRole === 'admin' || planningUserRole === 'commercial'
+
   return (
     <Box>
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+      <Box display="flex" justifyContent="space-between" alignItems="center" mb={2} flexWrap="wrap" gap={1}>
         <Typography variant="h4">
           Planning des Visites
         </Typography>
-        {pharmaciesWithNextVisit.length > 0 && (() => {
+        <Box display="flex" alignItems="center" gap={1} flexWrap="wrap" justifyContent="flex-end">
+          {canUseAutoPlanning && (
+            <Tooltip title="Recalcule les prochaines visites selon les règles Digestic (sauf fiches verrouillées manuellement)">
+              <Button
+                variant="outlined"
+                onClick={openPlanningDialog}
+                disabled={planningBusy}
+              >
+                Recalcul automatique
+              </Button>
+            </Tooltip>
+          )}
+          {visiblePlanningItems.length > 0 && (() => {
           // Calculer le nombre de pharmacies avec coordonnées pour l'itinéraire
           let pharmaciesCount = 0
           if (tabValue === 0) {
@@ -1010,7 +1401,56 @@ function Planning() {
             </>
           ) : null
         })()}
+        </Box>
       </Box>
+
+      {planningUserRole === 'admin' && sortedCommercialsForFilter.length > 0 ? (
+        <Paper sx={{ p: 2, mb: 2 }}>
+          <Typography variant="subtitle1" gutterBottom>
+            Afficher le planning pour
+          </Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ mb: 1.5 }} display="block">
+            Cochez les commerciaux dont les visites à venir apparaissent ci-dessous. Par défaut, tous sont
+            affichés.
+          </Typography>
+          <Box display="flex" flexWrap="wrap" gap={1} sx={{ mb: 2 }}>
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={() => setAdminVisibleCommercialIds(null)}
+            >
+              Tout sélectionner
+            </Button>
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={() => setAdminVisibleCommercialIds([])}
+            >
+              Tout désélectionner
+            </Button>
+          </Box>
+          <FormGroup row sx={{ flexWrap: 'wrap', gap: 0.5, columnGap: 2 }}>
+            {sortedCommercialsForFilter.map((c) => {
+              const sid = String(c.id)
+              const label = `${c.first_name || ''} ${c.last_name || ''}`.trim() || sid
+              return (
+                <FormControlLabel
+                  key={sid}
+                  control={
+                    <Checkbox
+                      size="small"
+                      checked={isAdminCommercialFilterChecked(sid)}
+                      onChange={() => toggleAdminCommercialFilter(sid)}
+                    />
+                  }
+                  label={label}
+                  sx={{ mr: 1 }}
+                />
+              )
+            })}
+          </FormGroup>
+        </Paper>
+      ) : null}
 
       <Paper sx={{ mt: 3 }}>
         <Tabs value={tabValue} onChange={handleTabChange}>
@@ -1100,6 +1540,163 @@ function Planning() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      <Dialog open={planningDialogOpen} onClose={() => !planningBusy && setPlanningDialogOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Recalcul automatique du planning</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Les pharmacies avec un ajustement manuel (<em>override</em>) ne sont pas modifiées. Les pharmacies sans
+            commercial assigné ne sont jamais prises en compte.
+            {planningUserRole === 'admin'
+              ? ' Utilisez la liste ci-dessous pour cocher un ou plusieurs commerciaux, ou tous à la fois '
+                + '(liste déroulante à choix multiples). À l’ouverture du dialogue, la sélection reflète vos cases '
+                + '« Afficher le planning pour » ; les deux boutons raccourcis permettent de tout sélectionner ou '
+                + 'de tout désélectionner.'
+              : ' Portée : votre portefeuille uniquement.'}
+          </Typography>
+          {planningUserRole === 'admin' &&
+            (sortedCommercialsForFilter.length > 0 ? (
+              <>
+                <FormControl fullWidth size="small" sx={{ mb: 1 }}>
+                  <InputLabel id="planning-run-commercials-label">
+                    Commerciaux concernés par le recalcul
+                  </InputLabel>
+                  <Select
+                    labelId="planning-run-commercials-label"
+                    id="planning-run-commercials-multiple"
+                    multiple
+                    value={
+                      planningDialogCommercialIds === null
+                        ? sortedCommercialsForFilter.map((c) => String(c.id))
+                        : planningDialogCommercialIds
+                    }
+                    onChange={handlePlanningDialogCommercialChange}
+                    input={<OutlinedInput label="Commerciaux concernés par le recalcul" />}
+                    renderValue={(selected) => {
+                      const allLen = sortedCommercialsForFilter.length
+                      const selArr = [...selected].map(String)
+                      if (
+                        planningDialogCommercialIds === null ||
+                        (allLen > 0 && selArr.length === allLen)
+                      ) {
+                        return 'Tous les commerciaux'
+                      }
+                      if (!selArr.length) return 'Aucune sélection'
+                      const labelOne = (id) => {
+                        const c = sortedCommercialsForFilter.find((x) => String(x.id) === id)
+                        return (
+                          (c ? `${c.first_name || ''} ${c.last_name || ''}`.trim() : '') || String(id)
+                        )
+                      }
+                      if (selArr.length <= 2) return selArr.map(labelOne).join(', ')
+                      return `${selArr.length} commerciaux sélectionnés`
+                    }}
+                    MenuProps={{
+                      PaperProps: { sx: { maxHeight: 320 } },
+                      disableAutoFocusItem: true,
+                    }}
+                  >
+                    {sortedCommercialsForFilter.map((c) => {
+                      const sid = String(c.id)
+                      const nm = `${c.first_name || ''} ${c.last_name || ''}`.trim() || sid
+                      const checked =
+                        planningDialogCommercialIds === null ||
+                        planningDialogCommercialIds.includes(sid)
+                      return (
+                        <MenuItem key={sid} value={sid} dense sx={{ gap: 0.5 }}>
+                          <Checkbox
+                            size="small"
+                            checked={checked}
+                            tabIndex={-1}
+                            sx={{ mr: 0.5, pointerEvents: 'none' }}
+                          />
+                          {nm}
+                        </MenuItem>
+                      )
+                    })}
+                  </Select>
+                </FormControl>
+                <Box display="flex" flexWrap="wrap" gap={0.75} sx={{ mb: 2 }}>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={() => setPlanningDialogCommercialIds(null)}
+                  >
+                    Tous les commerciaux
+                  </Button>
+                  <Button size="small" variant="outlined" onClick={() => setPlanningDialogCommercialIds([])}>
+                    Aucun
+                  </Button>
+                </Box>
+              </>
+            ) : (
+              <Typography variant="body2" color="warning.main" sx={{ mb: 2 }}>
+                Aucun commercial disponible dans l’application.
+              </Typography>
+            ))}
+          <TextField
+            label="Horizon (jours)"
+            type="number"
+            fullWidth
+            size="small"
+            inputProps={{ min: 1, max: 60 }}
+            value={planningHorizon}
+            onChange={(ev) => setPlanningHorizon(ev.target.value)}
+            sx={{ mb: 2 }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPlanningDialogOpen(false)} disabled={planningBusy}>
+            Fermer
+          </Button>
+          <Button
+            onClick={() => handlePlanningRun(true)}
+            disabled={planningBusy}
+          >
+            {planningBusy ? <CircularProgress size={20} /> : 'Prévisualiser'}
+          </Button>
+          <Button
+            variant="contained"
+            onClick={() => {
+              notify(
+                'Appliquer le planning automatique aux dates « prochaine visite » en base ?',
+                'warning',
+                {
+                  action: (
+                    <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center', flexShrink: 0 }}>
+                      <Button color="inherit" size="small" onClick={() => dismiss()}>
+                        Annuler
+                      </Button>
+                      <Button
+                        color="inherit"
+                        size="small"
+                        variant="outlined"
+                        sx={{
+                          borderColor: 'rgba(255,255,255,0.65)',
+                          color: 'inherit',
+                          '&:hover': { borderColor: 'rgba(255,255,255,0.9)' },
+                        }}
+                        onClick={() => {
+                          dismiss()
+                          void handlePlanningRun(false)
+                        }}
+                      >
+                        Confirmer
+                      </Button>
+                    </Box>
+                  ),
+                },
+              )
+            }}
+            disabled={planningBusy}
+            color="primary"
+          >
+            Appliquer
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {NotifierSnackbar}
     </Box>
   )
 }

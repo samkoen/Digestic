@@ -15,6 +15,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     Numeric,
+    SmallInteger,
     String,
     Text,
     Time,
@@ -258,6 +259,10 @@ class Pharmacy(Base):
         DateTime(timezone=True), nullable=True
     )
     next_visit_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    planning_hard_rdv_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    planning_manual_override: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
     photo_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -379,6 +384,7 @@ class VisitReport(Base):
         String(64), default="virement 30 jours", nullable=False
     )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    feeling_rating: Mapped[int | None] = mapped_column(Integer, nullable=True)
     synced: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     billing_type: Mapped[str] = mapped_column(
         String(32), default="immediate", nullable=False
@@ -404,6 +410,10 @@ class VisitReport(Base):
         CheckConstraint(
             "billing_type IN ('immediate', 'monthly_recap')",
             name="ck_visit_reports_billing_type",
+        ),
+        CheckConstraint(
+            "feeling_rating IS NULL OR (feeling_rating >= 1 AND feeling_rating <= 5)",
+            name="ck_visit_reports_feeling_rating_range",
         ),
     )
 
@@ -829,4 +839,103 @@ class EmailTemplate(Base):
 
     updated_by: Mapped["User | None"] = relationship(foreign_keys=[updated_by_user_id])
 
+class PlanningWeightsRevision(Base):
+    """Révision immuable des poids du moteur de planning (distinct de la note terrain code v1)."""
+
+    __tablename__ = "planning_weights_revisions"
+    __table_args__ = (UniqueConstraint("revision_number", name="uq_planning_weights_revisions_number"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    revision_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    weights: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+
+class PlanningRuntimeSettings(Base):
+    """Une ligne singleton : révision active pour les runs sans surcharge HTTP."""
+
+    __tablename__ = "planning_runtime_settings"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_planning_runtime_settings_singleton"),
+        CheckConstraint(
+            "manual_planning_segment_mode IN ('inherit', 'manual_revision')",
+            name="ck_planning_runtime_manual_segment_mode",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(SmallInteger, primary_key=True, default=1)
+    active_revision_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("planning_weights_revisions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    manual_planning_segment_mode: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="inherit"
+    )
+
+
+class PlanningRun(Base):
+    """Audit d’un recalcul planning : poids effectifs et révision « active » au moment du run."""
+
+    __tablename__ = "planning_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    reference_date: Mapped[date] = mapped_column(Date, nullable=False)
+    horizon_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    dry_run: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    active_only: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    scope_commercial_ids: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    active_revision_id_at_run: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("planning_weights_revisions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    weights_request_override: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    weights_effective: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    assignments_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    skipped_manual_override_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    triggered_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+
+class PharmacyPlanningRevisionSegment(Base):
+    """Intervalle [valid_from, valid_to) : révision planning effective pour une pharmacie."""
+
+    __tablename__ = "pharmacy_planning_revision_segments"
+    __table_args__ = (
+        CheckConstraint(
+            "segment_source IN ('auto', 'manual')",
+            name="ck_ph_plan_segments_source",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=_uuid)
+    pharmacy_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("pharmacies.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    valid_from: Mapped[date] = mapped_column(Date, nullable=False)
+    valid_to: Mapped[date | None] = mapped_column(Date, nullable=True)
+    planning_weights_revision_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("planning_weights_revisions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    planning_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("planning_runs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    segment_source: Mapped[str] = mapped_column(String(16), nullable=False)
+    weights_override_from_request: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 

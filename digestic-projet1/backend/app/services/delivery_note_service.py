@@ -63,10 +63,19 @@ class DeliveryNoteService:
         note = DeliveryNote.from_dict(note_data)
         saved = self.repository.create(note)
         self.try_auto_send_delivery_note_email(saved.id)
-        return saved
+        return self.repository.find_by_id(saved.id) or saved
 
-    def create_standalone_delivery_note_admin(self, payload: dict[str, Any]) -> DeliveryNote:
-        """Bon sans rapport : réservé admin (route dédiée), même logique stock que après rapport."""
+    def create_standalone_delivery_note_admin(
+        self,
+        payload: dict[str, Any],
+        *,
+        auto_send_delivery_email: bool = True,
+    ) -> DeliveryNote:
+        """Bon sans rapport : réservé admin (route dédiée), même logique stock que après rapport.
+
+        Si ``auto_send_delivery_email`` est faux (ex. bon rectificatif), aucun envoi automatique :
+        le BL reste ``pending`` / non envoyé jusqu'à ``POST …/send-email``.
+        """
         pharmacy_id = str(payload.get("pharmacy_id") or "").strip()
         if not pharmacy_id:
             raise ValueError("pharmacy_id est obligatoire.")
@@ -172,7 +181,9 @@ class DeliveryNoteService:
         deposit_orm.validated_at = datetime.now(timezone.utc)
         self._db.flush()
         out = mp.deposit_orm_to_note(deposit_orm)
-        self.try_auto_send_delivery_note_email(out.id)
+        if auto_send_delivery_email:
+            self.try_auto_send_delivery_note_email(out.id)
+            return self.repository.find_by_id(out.id) or out
         return out
 
     def cancel_delivery_note_admin(self, note_id: str, admin_user_id: str) -> DeliveryNote:
@@ -291,7 +302,10 @@ class DeliveryNoteService:
             "free_units_quantity": free_u,
             "bl_billing_mode": pl.get("bl_billing_mode", "auto"),
         }
-        new_note = self.create_standalone_delivery_note_admin(merged)
+        new_note = self.create_standalone_delivery_note_admin(
+            merged,
+            auto_send_delivery_email=False,
+        )
         out = dict(new_note.to_dict())
         out["replaced_deposit_id"] = raw
         out["replaced_bl_number"] = prev_bl

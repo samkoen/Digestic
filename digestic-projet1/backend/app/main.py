@@ -24,6 +24,7 @@ from app.controllers import (
     invoice_controller,
     pharmacy_advanced_filter_controller,
     pharmacy_controller,
+    planning_controller,
     product_controller,
     table_view_controller,
     user_controller,
@@ -124,6 +125,9 @@ def create_app() -> FastAPI:
     app.include_router(product_controller.router, prefix="/api/products", tags=["products"])
     app.include_router(depot_controller.router, prefix="/api/depots", tags=["depots"])
     app.include_router(visit_controller.router, prefix="/api/visits", tags=["visits"])
+    app.include_router(
+        planning_controller.router, prefix="/api/planning", tags=["planning"]
+    )
     app.include_router(visit_report_controller.router, prefix="/api/visit-reports", tags=["visit-reports"])
     app.include_router(delivery_note_controller.router, prefix="/api/delivery-notes", tags=["delivery-notes"])
     app.include_router(invoice_controller.router, prefix="/api/invoices", tags=["invoices"])

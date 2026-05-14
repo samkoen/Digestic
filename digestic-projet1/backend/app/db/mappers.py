@@ -110,6 +110,10 @@ def pharm_orm_to_domain(p: orm.Pharmacy, warehouse: orm.Warehouse | None = None)
         commercial_id=str(p.commercial_id) if p.commercial_id else None,
         last_visit_at=parse_datetime_iso(p.last_visit_at) if p.last_visit_at else None,
         next_visit_date=p.next_visit_date.isoformat() if p.next_visit_date else None,
+        planning_hard_rdv_date=(
+            p.planning_hard_rdv_date.isoformat() if getattr(p, "planning_hard_rdv_date", None) else None
+        ),
+        planning_manual_override=bool(getattr(p, "planning_manual_override", False)),
         photo_url=p.photo_url,
         payment_mode=_payment_to_api(p.payment_mode),
         reduction=float(getattr(p, "reduction_percent", 0) or 0),
@@ -159,6 +163,7 @@ def report_orm_to_domain(r: orm.VisitReport) -> VisitReport:
         delivery_mode=r.delivery_mode,
         payment_mode=_payment_to_api(r.payment_mode),
         notes=r.notes,
+        feeling_rating=getattr(r, "feeling_rating", None),
         synced=r.synced,
         billing_type=getattr(r, "billing_type", None) or "immediate",
         returns_quantity=int(getattr(r, "returns_quantity", 0) or 0),

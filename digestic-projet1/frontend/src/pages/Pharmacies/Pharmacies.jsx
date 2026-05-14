@@ -448,7 +448,10 @@ function Pharmacies() {
         // décale d’un jour en fin de journée UTC (ex. 28/4 → 27/4 stocké).
         const isoDate =
           trimmed && /^\d{4}-\d{2}-\d{2}$/.test(trimmed) ? trimmed : null
-        await pharmacyService.update(pharmacyId, { next_visit_date: isoDate })
+        await pharmacyService.update(pharmacyId, {
+          next_visit_date: isoDate,
+          planning_manual_override: Boolean(isoDate),
+        })
         setEditingNextVisitId(null)
         setEditingNextVisitValue('')
         setShouldSaveOnBlur(true)

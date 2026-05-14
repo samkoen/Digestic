@@ -7,24 +7,32 @@ export function useNotifier() {
     open: false,
     message: '',
     severity: 'success',
+    action: null,
   })
 
   const closeSnackbar = useCallback((_e, reason) => {
     if (reason === 'clickaway') {
       return
     }
-    setSnackbar((s) => ({ ...s, open: false }))
+    setSnackbar((s) => ({ ...s, open: false, action: null }))
   }, [])
 
-  const notify = useCallback((message, severity = 'success') => {
-    setSnackbar({ open: true, message, severity })
+  const notify = useCallback((message, severity = 'success', options = {}) => {
+    setSnackbar({
+      open: true,
+      message,
+      severity,
+      action: options.action ?? null,
+    })
   }, [])
 
   const NotifierSnackbar = useMemo(
     () => (
       <Snackbar
         open={snackbar.open}
-        autoHideDuration={snackbar.severity === 'error' ? 9000 : 6000}
+        autoHideDuration={
+          snackbar.action ? null : snackbar.severity === 'error' ? 9000 : 6000
+        }
         onClose={closeSnackbar}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
       >
@@ -33,6 +41,7 @@ export function useNotifier() {
           onClose={closeSnackbar}
           severity={snackbar.severity}
           variant="filled"
+          action={snackbar.action ?? undefined}
           sx={{
             width: '100%',
             maxWidth: 560,
@@ -43,8 +52,14 @@ export function useNotifier() {
         </Alert>
       </Snackbar>
     ),
-    [snackbar.open, snackbar.message, snackbar.severity, closeSnackbar],
+    [
+      snackbar.open,
+      snackbar.message,
+      snackbar.severity,
+      snackbar.action,
+      closeSnackbar,
+    ],
   )
 
-  return { notify, NotifierSnackbar }
+  return { notify, dismiss: closeSnackbar, NotifierSnackbar }
 }

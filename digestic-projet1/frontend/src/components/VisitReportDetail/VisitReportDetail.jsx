@@ -17,6 +17,7 @@ import {
   FormControlLabel,
   Checkbox,
   CircularProgress,
+  Rating,
 } from '@mui/material'
 import { format } from 'date-fns'
 import EditIcon from '@mui/icons-material/Edit'
@@ -51,6 +52,7 @@ function VisitReportDetail({ open, onClose, report, onUpdate }) {
     delivery_mode: 'normal',
     notes: '',
     bl_reduction: 0,
+    feeling_rating: null,
   })
 
   useEffect(() => {
@@ -75,6 +77,10 @@ function VisitReportDetail({ open, onClose, report, onUpdate }) {
         delivery_mode: report.delivery_mode || 'normal',
         notes: report.notes || '',
         bl_reduction: report.bl_reduction ?? 0,
+        feeling_rating:
+          report.feeling_rating !== undefined && report.feeling_rating !== null
+            ? Number(report.feeling_rating)
+            : null,
       })
       setIsEditing(false)
     }
@@ -186,6 +192,7 @@ function VisitReportDetail({ open, onClose, report, onUpdate }) {
         voice_note_url: formData.voice_note_url || null,
         photo_note_url: formData.photo_note_url || null,
         video_note_url: formData.video_note_url || null,
+        feeling_rating: formData.feeling_rating ?? null,
       }
       if (weeks_until_return) {
         updateData.weeks_until_return = parseInt(weeks_until_return, 10)
@@ -224,6 +231,10 @@ function VisitReportDetail({ open, onClose, report, onUpdate }) {
         delivery_mode: report.delivery_mode || 'normal',
         notes: report.notes || '',
         bl_reduction: report.bl_reduction ?? 0,
+        feeling_rating:
+          report.feeling_rating !== undefined && report.feeling_rating !== null
+            ? Number(report.feeling_rating)
+            : null,
       })
     }
     setIsEditing(false)
@@ -689,6 +700,42 @@ function VisitReportDetail({ open, onClose, report, onUpdate }) {
                 !report.voice_note_url &&
                 !report.photo_note_url &&
                 !report.video_note_url && <Typography color="text.secondary">—</Typography>}
+            </CardContent>
+          </Card>
+
+          <Card variant="outlined" sx={{ mb: 2 }}>
+            <CardContent>
+              <Typography variant="h6" gutterBottom>
+                Ressenti après la visite
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+                Note subjective sur la façon dont la visite s’est déroulée (optionnel). 1 = très mal, 5 = très bien.
+              </Typography>
+              <Divider sx={{ mb: 2 }} />
+              {isEditing ? (
+                <Box display="flex" flexWrap="wrap" alignItems="center" gap={1}>
+                  <Rating
+                    value={formData.feeling_rating ?? null}
+                    onChange={(_, value) =>
+                      setFormData((prev) => ({ ...prev, feeling_rating: value }))
+                    }
+                    size="large"
+                  />
+                  <Button
+                    size="small"
+                    variant="text"
+                    onClick={() => setFormData((prev) => ({ ...prev, feeling_rating: null }))}
+                  >
+                    Effacer
+                  </Button>
+                </Box>
+              ) : report.feeling_rating != null && report.feeling_rating !== '' ? (
+                <Rating value={Number(report.feeling_rating)} readOnly size="medium" />
+              ) : (
+                <Typography variant="body2" color="text.secondary">
+                  Non renseigné
+                </Typography>
+              )}
             </CardContent>
           </Card>
 

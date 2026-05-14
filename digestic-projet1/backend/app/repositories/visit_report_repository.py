@@ -72,6 +72,7 @@ class VisitReportRepository:
             delivery_mode=model.delivery_mode,
             payment_mode=mp.normalize_payment_mode_to_db(model.payment_mode),
             notes=model.notes,
+            feeling_rating=getattr(model, "feeling_rating", None),
             synced=model.synced,
             billing_type=model.billing_type or "immediate",
             returns_quantity=int(getattr(model, "returns_quantity", 0) or 0),
@@ -132,6 +133,8 @@ class VisitReportRepository:
             )
         if hasattr(model, "bl_reduction"):
             row.bl_reduction_percent = float(model.bl_reduction or 0)
+        if hasattr(model, "feeling_rating"):
+            row.feeling_rating = getattr(model, "feeling_rating", None)
         self._db.flush()
         return mp.report_orm_to_domain(row)
 

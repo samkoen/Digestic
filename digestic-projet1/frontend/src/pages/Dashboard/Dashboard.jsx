@@ -8,17 +8,14 @@ import {
   CircularProgress,
 } from '@mui/material'
 import LocalPharmacyIcon from '@mui/icons-material/LocalPharmacy'
-import EventIcon from '@mui/icons-material/Event'
 import ReceiptIcon from '@mui/icons-material/Receipt'
 import WarningIcon from '@mui/icons-material/Warning'
 import { pharmacyService } from '../../services/pharmacyService'
-import { visitService } from '../../services/visitService'
 import { invoiceService } from '../../services/invoiceService'
 
 function Dashboard() {
   const [stats, setStats] = useState({
     pharmacies: 0,
-    visitsToday: 0,
     pendingInvoices: 0,
     overdueInvoices: 0,
   })
@@ -27,21 +24,14 @@ function Dashboard() {
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const [pharmacyPage, visits, invoices, overdue] = await Promise.all([
+        const [pharmacyPage, invoices, overdue] = await Promise.all([
           pharmacyService.getList({ page: 1, page_size: 1, sort: 'name', order: 'asc' }),
-          visitService.getAll({ status: 'planned' }),
           invoiceService.getAll({ status: 'pending' }),
           invoiceService.getOverdue(30),
         ])
 
-        const today = new Date().toISOString().split('T')[0]
-        const visitsToday = visits.filter(
-          (visit) => visit.scheduled_date?.startsWith(today)
-        ).length
-
         setStats({
           pharmacies: pharmacyPage?.total ?? 0,
-          visitsToday,
           pendingInvoices: invoices.length,
           overdueInvoices: overdue.length,
         })
@@ -61,12 +51,6 @@ function Dashboard() {
       value: stats.pharmacies,
       icon: <LocalPharmacyIcon sx={{ fontSize: 40 }} />,
       color: '#1976d2',
-    },
-    {
-      title: 'Visites Aujourd\'hui',
-      value: stats.visitsToday,
-      icon: <EventIcon sx={{ fontSize: 40 }} />,
-      color: '#2e7d32',
     },
     {
       title: 'Factures en Attente',
@@ -97,7 +81,7 @@ function Dashboard() {
       </Typography>
       <Grid container spacing={3}>
         {statCards.map((card, index) => (
-          <Grid item xs={12} sm={6} md={3} key={index}>
+          <Grid item xs={12} sm={6} md={4} key={index}>
             <Card
               sx={{
                 height: '100%',

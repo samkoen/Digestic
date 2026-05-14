@@ -1,3 +1,4 @@
+import logging
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -15,6 +16,8 @@ from app.pagination import MAX_PAGE_SIZE
 from app.repositories.pharmacy_comment_repository import PharmacyCommentRepository
 from app.repositories.pharmacy_repository import PharmacyRepository
 from app.services.pharmacy_service import PharmacyService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -136,6 +139,10 @@ def get_pharmacies(
             advanced_filter_payload=adv_payload,
         )
     except Exception as e:
+        logger.exception(
+            "Erreur GET /api/pharmacies paginated — query_params=%s",
+            dict(request.query_params),
+        )
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
@@ -146,6 +153,7 @@ def list_distinct_pharmacy_cities(
     try:
         return service.list_distinct_cities()
     except Exception as e:
+        logger.exception("Erreur GET /api/pharmacies/distinct-cities")
         return JSONResponse({"error": str(e)}, status_code=500)
 
 

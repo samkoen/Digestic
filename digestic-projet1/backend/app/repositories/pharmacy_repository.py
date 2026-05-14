@@ -305,6 +305,13 @@ class PharmacyRepository:
             r_raw = d.get("reduction_percent")
         d["reduction_percent"] = normalize_pharmacy_reduction_pct(r_raw)
         d.pop("reduction", None)
+        if d.get("planning_hard_rdv_date") in ("", None):
+            d["planning_hard_rdv_date"] = None
+        elif isinstance(d.get("planning_hard_rdv_date"), str):
+            v = str(d["planning_hard_rdv_date"]).strip()
+            d["planning_hard_rdv_date"] = v[:10] if len(v) >= 10 else (v or None)
+        pv = d.get("planning_manual_override")
+        d["planning_manual_override"] = bool(pv) if pv is not None else False
         return d
 
     def create(self, model: Pharmacy) -> Pharmacy:
@@ -336,6 +343,12 @@ class PharmacyRepository:
                 if d.get("next_visit_date") not in (None, "")
                 else None
             ),
+            planning_hard_rdv_date=(
+                mp.parse_date(d["planning_hard_rdv_date"])
+                if d.get("planning_hard_rdv_date") not in (None, "")
+                else None
+            ),
+            planning_manual_override=bool(d.get("planning_manual_override", False)),
             photo_url=d.get("photo_url"),
             latitude=d.get("latitude"),
             longitude=d.get("longitude"),
@@ -352,6 +365,7 @@ class PharmacyRepository:
         row = self._db.get(orm.Pharmacy, pid)
         if not row:
             return None
+        old_next_visit = row.next_visit_date
         d = self._prepare_new({**mp.pharm_orm_to_domain(row).to_dict(), **model.to_dict()})
         row.name = d["name"]
         row.address_line = d["address_line"]
@@ -376,9 +390,29 @@ class PharmacyRepository:
             if d.get("next_visit_date") not in (None, "")
             else None
         )
+        row.planning_hard_rdv_date = (
+            mp.parse_date(d["planning_hard_rdv_date"])
+            if d.get("planning_hard_rdv_date") not in (None, "")
+            else None
+        )
+        row.planning_manual_override = bool(d.get("planning_manual_override", False))
         row.photo_url = d.get("photo_url")
         row.latitude = d.get("latitude")
         row.longitude = d.get("longitude")
+        if old_next_visit != row.next_visit_date:
+            from datetime import datetime, timezone
+
+            from app.services.pharmacy_planning_segments_service import (
+                maybe_record_manual_next_visit_segment,
+            )
+
+            maybe_record_manual_next_visit_segment(
+                self._db,
+                pharmacy_id=pid,
+                previous_next_visit_date=old_next_visit,
+                new_next_visit_date=row.next_visit_date,
+                effective_date=datetime.now(timezone.utc).date(),
+            )
         self._db.flush()
         return self.find_by_id(id_)
 

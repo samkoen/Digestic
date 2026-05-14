@@ -24,6 +24,21 @@ _VISIT_NOT_COMPLETED_REASON_REQUIRED = (
 )
 
 
+def _normalize_feeling_rating(raw: object | None) -> int | None:
+    """Note subjective 1–5 après la visite ; None si non renseignée."""
+    if raw is None or raw == "":
+        return None
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        raise ValueError(
+            "Le ressenti (note après visite) doit être un entier entre 1 et 5, ou être omis."
+        )
+    if n < 1 or n > 5:
+        raise ValueError("Le ressenti doit être une note entre 1 et 5.")
+    return n
+
+
 def _require_visit_not_completed_reason_if_applicable(
     visit_status: str | None, visit_not_completed_reason: str | None
 ) -> None:
@@ -71,6 +86,9 @@ def _pharmacy_comment_text_from_visit_report(report: VisitReport) -> Optional[st
     note = (report.notes or "").strip()
     if note:
         parts.append(f"Note : {note}")
+    fr = getattr(report, "feeling_rating", None)
+    if fr is not None:
+        parts.append(f"Ressenti après visite : {fr}/5")
     vurl = (report.voice_note_url or "").strip()
     if vurl:
         parts.append(f"Note audio : {vurl}")
@@ -158,6 +176,11 @@ class VisitReportService:
         if rsrc is not None and str(rsrc).strip() == '':
             report_data['return_source_visit_report_id'] = None
 
+        if 'feeling_rating' in report_data:
+            report_data['feeling_rating'] = _normalize_feeling_rating(
+                report_data.get('feeling_rating')
+            )
+
         _require_visit_not_completed_reason_if_applicable(
             report_data.get("visit_status"),
             report_data.get("visit_not_completed_reason"),
@@ -214,6 +237,11 @@ class VisitReportService:
         for k in ("voice_note_url", "photo_note_url", "video_note_url"):
             if k in report_data and report_data.get(k) == "":
                 report_data[k] = None
+
+        if 'feeling_rating' in report_data:
+            report_data['feeling_rating'] = _normalize_feeling_rating(
+                report_data.get('feeling_rating')
+            )
 
         for key, value in report_data.items():
             if hasattr(existing, key):

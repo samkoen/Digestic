@@ -14,6 +14,7 @@ import {
   TableRow,
   Paper,
   Chip,
+  Rating,
 } from '@mui/material'
 import { format } from 'date-fns'
 import { visitReportService } from '../../services/visitReportService'
@@ -106,6 +107,9 @@ function VisitReportList({ open, onClose, pharmacyId, pharmacyName, onSelectRepo
                     Statut
                   </TableCell>
                   <TableCell sx={{ fontWeight: 'bold', backgroundColor: '#f5f5f5' }}>
+                    Ressenti
+                  </TableCell>
+                  <TableCell sx={{ fontWeight: 'bold', backgroundColor: '#f5f5f5' }}>
                     Dépôt
                   </TableCell>
                   <TableCell sx={{ fontWeight: 'bold', backgroundColor: '#f5f5f5' }}>
@@ -135,6 +139,15 @@ function VisitReportList({ open, onClose, pharmacyId, pharmacyName, onSelectRepo
                     </TableCell>
                     <TableCell>
                       {getStatusChip(report)}
+                    </TableCell>
+                    <TableCell>
+                      {report.feeling_rating != null && report.feeling_rating !== '' ? (
+                        <Rating value={Number(report.feeling_rating)} readOnly size="small" />
+                      ) : (
+                        <Typography variant="body2" color="text.secondary">
+                          —
+                        </Typography>
+                      )}
                     </TableCell>
                     <TableCell>
                       {report.has_deposit ? (

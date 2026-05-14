@@ -26,6 +26,8 @@ class Pharmacy:
     commercial_id: Optional[str] = None  # ID du commercial assigné
     last_visit_at: Optional[str] = None  # dernière visite (ISO, aligné sur last_visit_at en base)
     next_visit_date: Optional[str] = None  # Date de la prochaine visite (ISO format)
+    planning_hard_rdv_date: Optional[str] = None  # Jour fixe (RDV dur), ISO date
+    planning_manual_override: bool = False  # True = l’utilisateur a imposé la date, l’algo ne touche pas
     photo_url: Optional[str] = None
     payment_mode: str = "virement 30 jours"
     reduction: float = 0.0  # pourcentage 0–100 (HT), appliqué BL et facturation dépôt
@@ -50,6 +52,7 @@ class Pharmacy:
             'id', 'name', 'address', 'city', 'postal_code', 'warehouse_id', 'country', 'email', 'phone',
             'latitude', 'longitude', 'pharmacist_name', 'pharmacist_email', 'pharmacist_phone',
             'rib', 'status', 'commercial_id', 'last_visit_at', 'next_visit_date', 'photo_url', 'payment_mode',
+            'planning_hard_rdv_date', 'planning_manual_override',
             'reduction', 'reduction_percent',
             'created_at', 'updated_at'
         }
@@ -57,6 +60,19 @@ class Pharmacy:
         rp = filtered_data.pop("reduction_percent", None)
         if "reduction" not in filtered_data and rp is not None:
             filtered_data["reduction"] = rp
+        pm = filtered_data.get("planning_manual_override")
+        if isinstance(pm, str):
+            filtered_data["planning_manual_override"] = pm.strip().lower() in (
+                "1",
+                "true",
+                "yes",
+                "oui",
+            )
+        if (
+            "planning_manual_override" not in filtered_data
+            or filtered_data["planning_manual_override"] is None
+        ):
+            filtered_data["planning_manual_override"] = False
         if "status" in filtered_data and (filtered_data["status"] is None or filtered_data["status"] == ""):
             del filtered_data["status"]
         # Ancien booléen API
@@ -68,5 +84,7 @@ class Pharmacy:
                 filtered_data["status"] = "actif"
         if "status" in filtered_data and isinstance(filtered_data["status"], str):
             filtered_data["status"] = filtered_data["status"].strip().lower()[:32] or "actif"
+        filtered_data.setdefault("planning_manual_override", False)
+        filtered_data.setdefault("planning_hard_rdv_date", None)
         return cls(**filtered_data)
 

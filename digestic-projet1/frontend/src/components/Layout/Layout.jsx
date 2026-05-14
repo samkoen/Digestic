@@ -19,15 +19,15 @@ import MenuIcon from '@mui/icons-material/Menu'
 import DashboardIcon from '@mui/icons-material/Dashboard'
 import LocalPharmacyIcon from '@mui/icons-material/LocalPharmacy'
 import TuneIcon from '@mui/icons-material/Tune'
-import EventIcon from '@mui/icons-material/Event'
 import CalendarTodayIcon from '@mui/icons-material/CalendarToday'
+import AssessmentIcon from '@mui/icons-material/Assessment'
 import ReceiptIcon from '@mui/icons-material/Receipt'
-import DescriptionIcon from '@mui/icons-material/Description'
 import PeopleIcon from '@mui/icons-material/People'
 import LocalShippingIcon from '@mui/icons-material/LocalShipping'
 import WarehouseIcon from '@mui/icons-material/Warehouse'
 import Inventory2Icon from '@mui/icons-material/Inventory2'
 import MarkEmailUnreadIcon from '@mui/icons-material/MarkEmailUnread'
+import SettingsSuggestIcon from '@mui/icons-material/SettingsSuggest'
 import LogoutIcon from '@mui/icons-material/Logout'
 import { authService } from '../../services/authService'
 
@@ -63,10 +63,9 @@ function Layout({ children }) {
     const baseItems = [
       { text: 'Tableau de bord', icon: <DashboardIcon />, path: '/' },
       { text: 'Pharmacies', icon: <LocalPharmacyIcon />, path: '/pharmacies' },
-      { text: 'Visites', icon: <EventIcon />, path: '/visits' },
       { text: 'Planning', icon: <CalendarTodayIcon />, path: '/planning' },
+      { text: 'Évaluation terrain', icon: <AssessmentIcon />, path: '/planning/evaluation' },
       { text: 'Factures', icon: <ReceiptIcon />, path: '/invoices' },
-      { text: 'Supports Commerciaux', icon: <DescriptionIcon />, path: '/materials' },
     ]
 
     if (user?.role === 'admin') {
@@ -78,6 +77,11 @@ function Layout({ children }) {
       })
       baseItems.push({ text: 'Dépôts', icon: <WarehouseIcon />, path: '/depots' })
       baseItems.push({ text: 'Produits', icon: <Inventory2Icon />, path: '/products' })
+      baseItems.push({
+        text: 'Paramètres planning',
+        icon: <SettingsSuggestIcon />,
+        path: '/planning/parametres',
+      })
       baseItems.push({ text: 'Commerciaux', icon: <PeopleIcon />, path: '/users' })
       baseItems.push({
         text: "Modèles d'e-mail",

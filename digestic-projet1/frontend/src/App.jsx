@@ -6,11 +6,10 @@ import Dashboard from './pages/Dashboard/Dashboard'
 import Pharmacies from './pages/Pharmacies/Pharmacies'
 import PharmacyAdvancedFiltersPage from './pages/Pharmacies/PharmacyAdvancedFiltersPage'
 import PharmacyDetail from './pages/Pharmacies/PharmacyDetail'
-import Visits from './pages/Visits/Visits'
-import VisitReport from './pages/Visits/VisitReport'
 import Planning from './pages/Planning/Planning'
+import PlanningEvaluation from './pages/Planning/PlanningEvaluation'
+import PlanningSettings from './pages/Planning/PlanningSettings'
 import Invoices from './pages/Invoices/Invoices'
-import CommercialMaterials from './pages/CommercialMaterials/CommercialMaterials'
 import Users from './pages/Users/Users'
 import DeliveryNotes from './pages/DeliveryNotes/DeliveryNotes'
 import Depots from './pages/Depots/Depots'
@@ -81,11 +80,17 @@ function App() {
                   }
                 />
                 <Route path="/pharmacies/:id" element={<PharmacyDetail />} />
-                <Route path="/visits" element={<Visits />} />
-                <Route path="/visits/report/:visitId" element={<VisitReport />} />
                 <Route path="/planning" element={<Planning />} />
+                <Route path="/planning/evaluation" element={<PlanningEvaluation />} />
+                <Route
+                  path="/planning/parametres"
+                  element={
+                    <PrivateRoute adminOnly>
+                      <PlanningSettings />
+                    </PrivateRoute>
+                  }
+                />
                 <Route path="/invoices" element={<Invoices />} />
-                <Route path="/materials" element={<CommercialMaterials />} />
                 <Route path="/delivery-notes" element={<DeliveryNotes />} />
                 <Route
                   path="/depots"

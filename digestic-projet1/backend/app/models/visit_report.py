@@ -32,6 +32,7 @@ class VisitReport:
     video_note_url: Optional[str] = None
     delivery_mode: str = "normal"  # normal, deposit_sale
     notes: Optional[str] = None
+    feeling_rating: Optional[int] = None  # 1–5 ressenti post-visite ; optionnel
     synced: bool = False  # Pour le mode offline
     payment_mode: str = "virement 30 jours"
     created_at: str = None

@@ -18,6 +18,7 @@ import {
   MenuItem,
   FormControl,
   FormControlLabel,
+  Chip,
   FormLabel,
   Checkbox,
   Radio,
@@ -27,6 +28,7 @@ import {
   List,
   ListItem,
   ListItemText,
+  Rating,
 } from '@mui/material'
 import ArrowBackIcon from '@mui/icons-material/ArrowBack'
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
@@ -107,6 +109,10 @@ function PharmacyDetail() {
   const [comments, setComments] = useState([])
   const [newCommentText, setNewCommentText] = useState('')
   const [commentSubmitting, setCommentSubmitting] = useState(false)
+  /** Planning auto : synchro depuis la pharmacie, éditée puis enregistrée explicitement */
+  const [planningAutoIncluded, setPlanningAutoIncluded] = useState(true)
+  const [planningHardRdvIso, setPlanningHardRdvIso] = useState('')
+  const [planningSettingsSaving, setPlanningSettingsSaving] = useState(false)
   const commentInputRef = useRef(null)
   const getDefaultReportPaymentMode = () => pharmacy?.payment_mode || DEFAULT_PAYMENT_MODE
   const getDefaultReportFormData = () => ({
@@ -127,6 +133,7 @@ function PharmacyDetail() {
     payment_mode: getDefaultReportPaymentMode(),
     delivery_mode: 'normal',
     bl_reduction: 0,
+    feeling_rating: null,
   })
   const [reportFormData, setReportFormData] = useState(getDefaultReportFormData)
 
@@ -154,6 +161,17 @@ function PharmacyDetail() {
     }
   }, [id])
 
+  useEffect(() => {
+    if (!pharmacy?.id) return
+    setPlanningAutoIncluded(!pharmacy.planning_manual_override)
+    const h = pharmacy.planning_hard_rdv_date
+    if (h && /^\d{4}-\d{2}-\d{2}/.test(String(h).trim())) {
+      setPlanningHardRdvIso(String(h).trim().slice(0, 10))
+    } else {
+      setPlanningHardRdvIso('')
+    }
+  }, [pharmacy?.id, pharmacy?.planning_manual_override, pharmacy?.planning_hard_rdv_date])
+
   const fetchData = async () => {
     try {
       setLoading(true)
@@ -178,6 +196,31 @@ function PharmacyDetail() {
       setLoading(false)
     }
   }
+
+  const handleSavePlanningFields = useCallback(async () => {
+    if (!id) return
+    setPlanningSettingsSaving(true)
+    try {
+      const trimmed = String(planningHardRdvIso || '').trim()
+      const payload = {
+        planning_manual_override: !planningAutoIncluded,
+        planning_hard_rdv_date: trimmed && /^\d{4}-\d{2}-\d{2}$/.test(trimmed) ? trimmed : null,
+      }
+      const updated = await pharmacyService.update(id, payload)
+      setPharmacy(updated)
+      notify('Paramètres de planning enregistrés.', 'success')
+    } catch (error) {
+      console.error(error)
+      notify('Erreur lors de la sauvegarde du planning.', 'error')
+    } finally {
+      setPlanningSettingsSaving(false)
+    }
+  }, [
+    id,
+    planningAutoIncluded,
+    planningHardRdvIso,
+    notify,
+  ])
 
 
   const resetReportForm = () => setReportFormData(getDefaultReportFormData())
@@ -303,6 +346,13 @@ function PharmacyDetail() {
         visit_date: new Date().toISOString(),
         ...rest,
         bl_reduction: Number.isFinite(br) ? Math.max(0, Math.min(100, br)) : 0,
+      }
+      if (
+        reportFormData.feeling_rating !== null &&
+        reportFormData.feeling_rating !== undefined &&
+        reportFormData.feeling_rating !== ''
+      ) {
+        reportData.feeling_rating = Number(reportFormData.feeling_rating)
       }
       if (weeks_until_return) {
         reportData.weeks_until_return = parseInt(weeks_until_return, 10)
@@ -448,6 +498,13 @@ function PharmacyDetail() {
   const photoEnlargedUrl =
     pharmacy.photo_url || `https://picsum.photos/seed/${photoSeed}/1200/900`
 
+  const canEditPlanning =
+    user?.role === 'admin' ||
+    (user?.role === 'commercial' &&
+      pharmacy.commercial_id &&
+      user?.id &&
+      String(pharmacy.commercial_id) === String(user.id))
+
   return (
     <Box>
       <Button
@@ -566,17 +623,89 @@ function PharmacyDetail() {
               <Typography>
                 <strong>Statut:</strong> {getPharmacyStatusLabel(pharmacy.status)}
               </Typography>
-              <Typography>
-                <strong>Prochaine visite:</strong>{' '}
-                {pharmacy.next_visit_date
-                  ? format(
-                      /^\d{4}-\d{2}-\d{2}/.test(String(pharmacy.next_visit_date).trim())
-                        ? parseISO(String(pharmacy.next_visit_date).trim().slice(0, 10))
-                        : new Date(pharmacy.next_visit_date),
-                      'dd/MM/yyyy',
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1 }}>
+                <Typography component="span" variant="body2">
+                  <strong>Prochaine visite:</strong>{' '}
+                  {pharmacy.next_visit_date
+                    ? format(
+                        /^\d{4}-\d{2}-\d{2}/.test(String(pharmacy.next_visit_date).trim())
+                          ? parseISO(String(pharmacy.next_visit_date).trim().slice(0, 10))
+                          : new Date(pharmacy.next_visit_date),
+                        'dd/MM/yyyy',
+                      )
+                    : '-'}
+                </Typography>
+                {pharmacy.planning_manual_override ? (
+                  <Chip size="small" variant="outlined" color="warning" label="Calcul auto désactivé" />
+                ) : null}
+                {(() => {
+                  const h = pharmacy.planning_hard_rdv_date
+                  if (!h || !/^\d{4}-\d{2}-\d{2}/.test(String(h).trim())) return null
+                  try {
+                    return (
+                      <Chip
+                        size="small"
+                        variant="outlined"
+                        color="primary"
+                        label={`RDV jour fixé : ${format(parseISO(String(h).trim().slice(0, 10)), 'dd/MM/yyyy')}`}
+                      />
                     )
-                  : '-'}
-              </Typography>
+                  } catch {
+                    return null
+                  }
+                })()}
+              </Box>
+              {canEditPlanning ? (
+                <>
+                  <Divider sx={{ my: 2 }} />
+                  <Typography variant="subtitle2" gutterBottom>
+                    Planning automatique
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1.5 }}>
+                    Cochez pour laisser le recalcul mettre à jour la prochaine visite ; décochez pour figer
+                    cette fiche (équivalent à une date imposée manuellement depuis le planning ou la liste).
+                  </Typography>
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        checked={planningAutoIncluded}
+                        onChange={(e) => setPlanningAutoIncluded(e.target.checked)}
+                      />
+                    }
+                    label="Inclure cette pharmacie dans le recalcul automatique"
+                    sx={{ display: 'block', mb: 1 }}
+                  />
+                  <TextField
+                    label="RDV jour fixe (prioritaire dans l’horizon)"
+                    type="date"
+                    size="small"
+                    fullWidth
+                    value={planningHardRdvIso}
+                    onChange={(e) => setPlanningHardRdvIso(e.target.value)}
+                    InputLabelProps={{ shrink: true }}
+                    helperText="Optionnel — si renseigné et dans la fenêtre du recalcul, cette journée impose la visite pour densifier le trajet avec le même quartier."
+                    sx={{ mb: 1 }}
+                  />
+                  <Box display="flex" flexWrap="wrap" gap={1} alignItems="center">
+                    <Button
+                      variant="contained"
+                      size="small"
+                      onClick={() => void handleSavePlanningFields()}
+                      disabled={planningSettingsSaving}
+                    >
+                      {planningSettingsSaving ? 'Enregistrement…' : 'Enregistrer le planning'}
+                    </Button>
+                    <Button
+                      size="small"
+                      variant="text"
+                      disabled={planningSettingsSaving || !planningHardRdvIso}
+                      onClick={() => setPlanningHardRdvIso('')}
+                    >
+                      Effacer le jour fixé
+                    </Button>
+                  </Box>
+                </>
+              ) : null}
             </CardContent>
           </Card>
           <Card>
@@ -1170,6 +1299,31 @@ function PharmacyDetail() {
                   </Button>
                 </Box>
               )}
+            </Grid>
+
+            <Grid item xs={12}>
+              <Typography variant="subtitle2" gutterBottom>
+                Ressenti après la visite (optionnel)
+              </Typography>
+              <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5 }}>
+                1 = très mal · 5 = très bien — à remplir après le passage en pharmacie.
+              </Typography>
+              <Box display="flex" flexWrap="wrap" alignItems="center" gap={1}>
+                <Rating
+                  value={reportFormData.feeling_rating ?? null}
+                  onChange={(_, value) =>
+                    setReportFormData((prev) => ({ ...prev, feeling_rating: value }))
+                  }
+                  size="large"
+                />
+                <Button
+                  size="small"
+                  variant="text"
+                  onClick={() => setReportFormData((prev) => ({ ...prev, feeling_rating: null }))}
+                >
+                  Effacer
+                </Button>
+              </Box>
             </Grid>
 
             <Grid item xs={12}>
