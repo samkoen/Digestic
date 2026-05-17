@@ -1,6 +1,7 @@
 """Service : données SQL + orchestration planning par commercial."""
 from __future__ import annotations
 
+import logging
 import uuid
 from collections import defaultdict
 from collections.abc import Mapping
@@ -15,6 +16,9 @@ from app.domain.visit_planning_engine import (
     build_inputs_from_row,
     run_planning_assignment,
 )
+from app.services.commercial_planning_calendar_service import get_working_dates_for_horizon
+
+logger = logging.getLogger(__name__)
 
 
 class VisitPlanningService:
@@ -125,12 +129,39 @@ class VisitPlanningService:
         manual_skip_count = self._manual_override_count(scope_commercial_uuids, active_only)
 
         for comm_id_str, subset in grouped.items():
+            try:
+                comm_uuid = uuid.UUID(str(comm_id_str).strip())
+            except ValueError:
+                comm_uuid = None
+            wd_set = None
+            if comm_uuid is not None:
+                wd_set = get_working_dates_for_horizon(
+                    self._db,
+                    commercial_user_id=comm_uuid,
+                    reference_date=reference_date,
+                    horizon_days=horizon_days,
+                )
             result = run_planning_assignment(
-                subset, reference_date, horizon_days, weights
+                subset,
+                reference_date,
+                horizon_days,
+                weights,
+                working_dates=wd_set,
             )
             merged_assignments.update(result.assignments)
             alerts.update(result.alerts)
             diagnostics[comm_id_str] = result.diagnostics
+
+        skipped_capacity_flex_ids: list[str] = []
+        skipped_capacity_flex_count = 0
+        for d in diagnostics.values():
+            if not isinstance(d, dict):
+                continue
+            skipped_capacity_flex_count += int(d.get("skipped_capacity_flex_count") or 0)
+            raw_ids = d.get("skipped_capacity_flex_ids")
+            if isinstance(raw_ids, list):
+                skipped_capacity_flex_ids.extend(str(x) for x in raw_ids)
+        skipped_capacity_flex_ids.sort()
 
         details: list[dict] = []
         for pid, d in merged_assignments.items():
@@ -148,6 +179,8 @@ class VisitPlanningService:
                 "reference_date": reference_date.isoformat(),
                 "horizon_days": horizon_days,
                 "skipped_manual_override_count": manual_skip_count,
+                "skipped_capacity_flex_count": skipped_capacity_flex_count,
+                "skipped_capacity_flex_pharmacy_ids": skipped_capacity_flex_ids,
                 "planned_count": len(merged_assignments),
                 "assigned_pharmacy_ids": sorted(merged_assignments.keys()),
                 "default_weights": PlanningWeights().__dict__,
@@ -163,11 +196,30 @@ class VisitPlanningService:
                 row.next_visit_date = d
         self._db.commit()
 
+        try:
+            from app.services.planning_rdv_hard_alert_notifications import (
+                notify_planning_rdv_hard_alerts_maybe,
+            )
+
+            notify_planning_rdv_hard_alerts_maybe(
+                self._db,
+                alerts=alerts,
+                assignments=merged_assignments,
+                reference_date=reference_date,
+                horizon_days=horizon_days,
+            )
+        except Exception:
+            logger.exception(
+                "Impossible d’envoyer les e-mails d’alerte RDV dur (le planning a bien été appliqué)."
+            )
+
         return {
             "dry_run": False,
             "reference_date": reference_date.isoformat(),
             "horizon_days": horizon_days,
             "skipped_manual_override_count": manual_skip_count,
+            "skipped_capacity_flex_count": skipped_capacity_flex_count,
+            "skipped_capacity_flex_pharmacy_ids": skipped_capacity_flex_ids,
             "updated_count": len(merged_assignments),
             "assigned_pharmacy_ids": sorted(merged_assignments.keys()),
             "default_weights": PlanningWeights().__dict__,

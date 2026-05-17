@@ -26,6 +26,18 @@ export const visitReportService = {
     return response.data
   },
 
+  /** Dernier rapport avec dépôt par pharmacie (Planning uniquement). Max 1500 ids côté API. */
+  getLastDepositsByPharmacyIds: async (pharmacyIds) => {
+    const ids = Array.isArray(pharmacyIds)
+      ? [...new Set(pharmacyIds.map((x) => String(x).trim()).filter(Boolean))]
+      : []
+    if (!ids.length) return []
+    const { data } = await api.post('/visit-reports/last-deposits-by-pharmacy', {
+      pharmacy_ids: ids,
+    })
+    return Array.isArray(data?.items) ? data.items : []
+  },
+
   /** @param {File} file */
   uploadMedia: async (file) => {
     const body = new FormData()

@@ -54,6 +54,56 @@ class User(Base):
     )
 
 
+class CommercialPlanningOffWeekday(Base):
+    """Jour de la semaine (0=lundi … 6=dimanche, Python weekday) où le commercial ne travaille pas — récurrent."""
+
+    __tablename__ = "commercial_planning_off_weekdays"
+    __table_args__ = (
+        UniqueConstraint(
+            "commercial_user_id",
+            "weekday",
+            name="uq_comm_plan_off_weekdays_comm_weekday",
+        ),
+        CheckConstraint("weekday >= 0 AND weekday <= 6", name="ck_comm_plan_weekday_range"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=_uuid
+    )
+    commercial_user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    weekday: Mapped[int] = mapped_column(SmallInteger(), nullable=False)
+
+
+class CommercialPlanningOffDate(Base):
+    """Date civile fermée pour le planning auto (vacances, congés ponctuel, formation…)."""
+
+    __tablename__ = "commercial_planning_off_dates"
+    __table_args__ = (
+        UniqueConstraint(
+            "commercial_user_id",
+            "off_date",
+            name="uq_comm_plan_off_dates_comm_date",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=_uuid
+    )
+    commercial_user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    off_date: Mapped[date] = mapped_column(Date, nullable=False)
+    label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
 class Warehouse(Base):
     __tablename__ = "warehouses"
     __table_args__ = (

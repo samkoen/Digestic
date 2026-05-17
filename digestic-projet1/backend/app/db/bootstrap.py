@@ -40,6 +40,11 @@ n'est pas réglée à ce jour.</p>
 — retard&nbsp;: <strong>{{ days_overdue }}</strong>&nbsp;jour(s).</p>
 <p>Merci de procéder au règlement ou de nous contacter en cas de difficulté.</p>"""
         return ("Rappel — facture {{ invoice_number }} impayée", _WRAPPER.format(s=inner))
+    if entry_key == "planning_rdv_hard_capacity_alert":
+        inner = """<p>{{ body_intro }}</p>
+<p><strong>Référence planning</strong> : {{ reference_date }} — horizon <strong>{{ horizon_days }}</strong> jour(s).</p>
+{{ items_html }}"""
+        return ("[Digestic] Alerte planning — RDV fixe / charge journalière", _WRAPPER.format(s=inner))
     inner = "<p>{{ message }}</p>"
     return ("Message Digestic", _WRAPPER.format(s=inner))
 

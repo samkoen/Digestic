@@ -4,6 +4,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from app.dependencies import get_db
@@ -46,6 +47,17 @@ def get_visit_report_service(db: Session = Depends(get_db)) -> VisitReportServic
     )
 
 
+class LastDepositsByPharmacyBody(BaseModel):
+    pharmacy_ids: list[str] = Field(default_factory=list)
+
+    @field_validator("pharmacy_ids")
+    @classmethod
+    def cap_pharmacies(cls, v: list[str]) -> list[str]:
+        if len(v) > 1500:
+            raise ValueError("Au plus 1500 pharmacies par requête.")
+        return v
+
+
 @router.get("")
 def get_visit_reports(
     commercial_id: str | None = None,
@@ -62,6 +74,19 @@ def get_visit_reports(
         return [report.to_dict() for report in reports]
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@router.post("/last-deposits-by-pharmacy")
+def post_last_deposits_by_pharmacy_for_planning(
+    body: LastDepositsByPharmacyBody,
+    service: VisitReportService = Depends(get_visit_report_service),
+):
+    """Pour la grille Planning : dernier rapport avec dépôt par pharmacie (liste bornée)."""
+    try:
+        items = service.get_last_deposits_for_planning(body.pharmacy_ids)
+        return {"items": items}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.post("/upload-media")

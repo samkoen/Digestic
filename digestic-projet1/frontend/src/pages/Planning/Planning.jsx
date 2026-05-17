@@ -31,12 +31,22 @@ import {
   FormControlLabel,
   Checkbox,
 } from '@mui/material'
-import { format, startOfWeek, endOfWeek, eachDayOfInterval, isSameDay, parseISO } from 'date-fns'
+import {
+  format,
+  startOfWeek,
+  endOfWeek,
+  eachDayOfInterval,
+  isSameDay,
+  parseISO,
+  addDays,
+} from 'date-fns'
 import { fr } from 'date-fns/locale'
 import VisibilityIcon from '@mui/icons-material/Visibility'
 import RouteIcon from '@mui/icons-material/Route'
 import EventRepeatIcon from '@mui/icons-material/EventRepeat'
 import CalendarTodayIcon from '@mui/icons-material/CalendarToday'
+import ChevronLeftIcon from '@mui/icons-material/ChevronLeft'
+import ChevronRightIcon from '@mui/icons-material/ChevronRight'
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
 import { visitService } from '../../services/visitService'
 import { pharmacyService } from '../../services/pharmacyService'
@@ -44,6 +54,7 @@ import { userService } from '../../services/userService'
 import { visitReportService } from '../../services/visitReportService'
 import { authService } from '../../services/authService'
 import { planningService } from '../../services/planningService'
+import CommercialWorkCalendarPanel from './CommercialWorkCalendarPanel'
 import { useNotifier } from '../../hooks/useNotifier'
 
 /** Prépare PUT pharmacie : vide la prochaine visite ; retire le RDV fixe s’il tombait ce jour. */
@@ -97,10 +108,6 @@ function Planning() {
   const [clearingPlanningDay, setClearingPlanningDay] = useState(false)
 
   useEffect(() => {
-    fetchData()
-  }, [selectedDate, tabValue])
-
-  useEffect(() => {
     let cancelled = false
     authService
       .getCurrentUser()
@@ -127,100 +134,109 @@ function Planning() {
     }
   }, [location.state])
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       setLoading(true)
-      
-      // Récupérer toutes les données nécessaires
-      const [pharmaciesData, commercialsData, allReports] = await Promise.all([
+
+      const [pharmaciesData, commercialsData] = await Promise.all([
         pharmacyService.getAll(),
         userService.getAll('commercial'),
-        visitReportService.getAll()
       ])
       
       setPharmacies(pharmaciesData)
       setCommercials(commercialsData)
 
-      // Pour chaque pharmacie, trouver le dernier réassort (rapport avec dépôt le plus récent)
-      const getLastReassort = (pharmacyId) => {
-        const pharmacyReports = allReports
-          .filter(report => 
-            report.pharmacy_id === pharmacyId && 
-            report.has_deposit === true && 
-            report.bottles_deposited > 0
-          )
-          .sort((a, b) => new Date(b.visit_date) - new Date(a.visit_date))
-        
-        if (pharmacyReports.length > 0) {
-          return {
-            date: pharmacyReports[0].visit_date,
-            quantity: pharmacyReports[0].bottles_deposited
-          }
-        }
-        return null
-      }
+      const baseRows = pharmaciesData
+        .filter((pharmacy) => pharmacy.next_visit_date !== null && pharmacy.next_visit_date !== undefined)
+        .map((pharmacy) => ({
+          pharmacy,
+          nextVisitDate: pharmacy.next_visit_date,
+          commercialId: pharmacy.commercial_id,
+          hasRIB: !!pharmacy.rib,
+          lastReassortDate: null,
+          lastReassortQuantity: null,
+        }))
 
-      // Pour chaque pharmacie, utiliser directement next_visit_date depuis la pharmacie
-      const pharmaciesWithNextVisits = pharmaciesData
-        .filter(pharmacy => pharmacy.next_visit_date !== null && pharmacy.next_visit_date !== undefined)
-        .map((pharmacy) => {
-          const lastReassort = getLastReassort(pharmacy.id)
-          return {
-            pharmacy,
-            nextVisitDate: pharmacy.next_visit_date,
-            commercialId: pharmacy.commercial_id,
-            hasRIB: !!pharmacy.rib,
-            lastReassortDate: lastReassort?.date || null,
-            lastReassortQuantity: lastReassort?.quantity || null
-          }
-        })
-
-      // Filtrer selon la date sélectionnée
-      let filteredPharmacies = []
+      let dateFiltered = []
       if (tabValue === 0) {
-        // Aujourd'hui
         const today = new Date()
         today.setHours(0, 0, 0, 0)
         const tomorrow = new Date(today)
         tomorrow.setDate(tomorrow.getDate() + 1)
-        
-        filteredPharmacies = pharmaciesWithNextVisits.filter(item => {
+
+        dateFiltered = baseRows.filter((item) => {
           const visitDate = new Date(item.nextVisitDate)
           visitDate.setHours(0, 0, 0, 0)
           return visitDate >= today && visitDate < tomorrow
         })
       } else if (tabValue === 1) {
-        // Jour sélectionné
         const targetDate = new Date(selectedDate)
         targetDate.setHours(0, 0, 0, 0)
         const nextDay = new Date(targetDate)
         nextDay.setDate(nextDay.getDate() + 1)
-        
-        filteredPharmacies = pharmaciesWithNextVisits.filter(item => {
+
+        dateFiltered = baseRows.filter((item) => {
           const visitDate = new Date(item.nextVisitDate)
           visitDate.setHours(0, 0, 0, 0)
           return visitDate >= targetDate && visitDate < nextDay
         })
       } else if (tabValue === 2) {
-        // Semaine
         const weekStart = startOfWeek(selectedDate, { weekStartsOn: 1 })
         const weekEnd = endOfWeek(selectedDate, { weekStartsOn: 1 })
         weekStart.setHours(0, 0, 0, 0)
         weekEnd.setHours(23, 59, 59, 999)
-        
-        filteredPharmacies = pharmaciesWithNextVisits.filter(item => {
+
+        dateFiltered = baseRows.filter((item) => {
           const visitDate = new Date(item.nextVisitDate)
           return visitDate >= weekStart && visitDate <= weekEnd
         })
       }
 
-      setPharmaciesWithNextVisit(filteredPharmacies)
+      let idsSource = dateFiltered
+      const role = (currentUser?.role ?? '').toString().toLowerCase().trim()
+      if (currentUser && role === 'commercial' && currentUser.id) {
+        idsSource = dateFiltered.filter((item) => String(item.commercialId) === String(currentUser.id))
+      } else if (currentUser && role === 'admin' && adminVisibleCommercialIds !== null) {
+        idsSource = dateFiltered.filter((item) =>
+          adminVisibleCommercialIds.includes(String(item.commercialId)),
+        )
+      }
+
+      const depositMap = new Map()
+      if (currentUser && idsSource.length > 0) {
+        const ids = [...new Set(idsSource.map((x) => String(x.pharmacy.id)))].filter(Boolean)
+        if (ids.length > 0) {
+          try {
+            const depositRows = await visitReportService.getLastDepositsByPharmacyIds(ids)
+            for (const row of depositRows) {
+              depositMap.set(String(row.pharmacy_id), row)
+            }
+          } catch (e) {
+            console.warn('Planning: derniers dépôts indisponibles', e)
+          }
+        }
+      }
+
+      const enriched = dateFiltered.map((item) => {
+        const row = depositMap.get(String(item.pharmacy.id))
+        return {
+          ...item,
+          lastReassortDate: row?.visit_date ?? null,
+          lastReassortQuantity: row?.bottles_deposited ?? null,
+        }
+      })
+
+      setPharmaciesWithNextVisit(enriched)
     } catch (error) {
       console.error('Error fetching planning data:', error)
     } finally {
       setLoading(false)
     }
-  }
+  }, [selectedDate, tabValue, currentUser, adminVisibleCommercialIds])
+
+  useEffect(() => {
+    void fetchData()
+  }, [fetchData])
 
   const handleTabChange = (event, newValue) => {
     setTabValue(newValue)
@@ -665,14 +681,16 @@ function Planning() {
       if (dryRun) {
         const n = res.planned_count ?? 0
         const sk = res.skipped_manual_override_count ?? 0
+        const capSkip = Number(res.skipped_capacity_flex_count ?? 0) || 0
         notify(
-          `Prévisualisation : ${n} pharmacie(s) replanifiée(s) (hors ${sk} en ajustement manuel). Détails dans la console (F12).`,
+          `Prévisualisation : ${n} pharmacie(s) replanifiée(s)${capSkip ? ` · ${capSkip} inchangée(s) (dates conservées, plafond atteint sur l’horizon)` : ''} (hors ${sk} en ajustement manuel). Détails dans la console (F12).`,
           'info',
         )
         console.info('Planning preview', res)
       } else {
+        const capSkip = Number(res.skipped_capacity_flex_count ?? 0) || 0
         notify(
-          `Planning appliqué : ${res.updated_count ?? 0} date(s) mise(s) à jour. ${res.skipped_manual_override_count ?? 0} fiche(s) ignorée(s) (verrou manuel).`,
+          `Planning appliqué : ${res.updated_count ?? 0} date(s) mise(s) à jour.${capSkip ? ` · ${capSkip} fiche(s) inchangées (capacité max sur ce run).` : ''} ${res.skipped_manual_override_count ?? 0} fiche(s) ignorée(s) (verrou manuel).`,
           'success',
         )
         await fetchData()
@@ -877,19 +895,38 @@ function Planning() {
   }
 
   const renderTodayView = () => {
-    const todayPharmacies = getPharmaciesForDate(new Date())
-    
+    const today = new Date()
+    const todayLabel = format(today, 'EEEE d MMMM yyyy', { locale: fr })
+    const todayPharmacies = getPharmaciesForDate(today)
+
     if (todayPharmacies.length === 0) {
       return (
-        <Typography variant="body1" color="text.secondary" sx={{ mt: 3 }}>
-          Aucune visite planifiée pour aujourd'hui
-        </Typography>
+        <Box sx={{ mt: 3 }}>
+          <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 600 }}>
+            {todayLabel}
+          </Typography>
+          <Typography variant="body1" color="text.secondary">
+            Aucune visite planifiée pour aujourd'hui
+          </Typography>
+        </Box>
       )
     }
 
     return (
       <Box>
-        <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
+        <Box
+          sx={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'flex-start',
+            mb: 2,
+            flexWrap: 'wrap',
+            gap: 2,
+          }}
+        >
+          <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+            Aujourd'hui · {todayLabel}
+          </Typography>
           <Button
             size="small"
             color="error"
@@ -997,7 +1034,8 @@ function Planning() {
 
   const renderDayView = () => {
     const dayPharmacies = getPharmaciesForDate(selectedDate)
-    
+    const selectedDayLabel = format(selectedDate, 'EEEE d MMMM yyyy', { locale: fr })
+
     return (
       <Box>
         <Box
@@ -1014,17 +1052,40 @@ function Planning() {
           <Typography variant="body1" gutterBottom>
             Sélectionner une date
           </Typography>
-          <input
-            type="date"
-            value={format(selectedDate, 'yyyy-MM-dd')}
-            onChange={handleDateChange}
-            style={{
-              padding: '8px',
-              fontSize: '16px',
-              border: '1px solid #ccc',
-              borderRadius: '4px',
-            }}
-          />
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
+            <Tooltip title="Jour précédent">
+              <IconButton
+                aria-label="Jour précédent"
+                size="small"
+                onClick={() => setSelectedDate((d) => addDays(d, -1))}
+              >
+                <ChevronLeftIcon />
+              </IconButton>
+            </Tooltip>
+            <input
+              type="date"
+              value={format(selectedDate, 'yyyy-MM-dd')}
+              onChange={handleDateChange}
+              style={{
+                padding: '8px',
+                fontSize: '16px',
+                border: '1px solid #ccc',
+                borderRadius: '4px',
+              }}
+            />
+            <Tooltip title="Jour suivant">
+              <IconButton
+                aria-label="Jour suivant"
+                size="small"
+                onClick={() => setSelectedDate((d) => addDays(d, 1))}
+              >
+                <ChevronRightIcon />
+              </IconButton>
+            </Tooltip>
+          </Box>
+          <Typography variant="subtitle2" color="text.secondary" sx={{ mt: 1, fontWeight: 600 }}>
+            {selectedDayLabel}
+          </Typography>
           </Box>
           {dayPharmacies.length > 0 ? (
             <Tooltip title={`Retire la prochaine visite pour les ${dayPharmacies.length} pharmacie(s) affichée(s) ce jour`}>
@@ -1044,7 +1105,7 @@ function Planning() {
 
         {dayPharmacies.length === 0 ? (
           <Typography variant="body1" color="text.secondary">
-            Aucune visite planifiée pour le {formatDateDisplay(selectedDate.toISOString())}
+            Aucune visite planifiée pour le {selectedDayLabel}
           </Typography>
         ) : (
           <Grid container spacing={2}>
@@ -1154,17 +1215,37 @@ function Planning() {
           <Typography variant="body1" gutterBottom>
             Sélectionner une date de la semaine
           </Typography>
-          <input
-            type="date"
-            value={format(selectedDate, 'yyyy-MM-dd')}
-            onChange={handleDateChange}
-            style={{
-              padding: '8px',
-              fontSize: '16px',
-              border: '1px solid #ccc',
-              borderRadius: '4px',
-            }}
-          />
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
+            <Tooltip title="Semaine précédente">
+              <IconButton
+                aria-label="Semaine précédente"
+                size="small"
+                onClick={() => setSelectedDate((d) => addDays(d, -7))}
+              >
+                <ChevronLeftIcon />
+              </IconButton>
+            </Tooltip>
+            <input
+              type="date"
+              value={format(selectedDate, 'yyyy-MM-dd')}
+              onChange={handleDateChange}
+              style={{
+                padding: '8px',
+                fontSize: '16px',
+                border: '1px solid #ccc',
+                borderRadius: '4px',
+              }}
+            />
+            <Tooltip title="Semaine suivante">
+              <IconButton
+                aria-label="Semaine suivante"
+                size="small"
+                onClick={() => setSelectedDate((d) => addDays(d, 7))}
+              >
+                <ChevronRightIcon />
+              </IconButton>
+            </Tooltip>
+          </Box>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
             Semaine du {format(weekStart, 'dd/MM')} au {format(weekEnd, 'dd/MM/yyyy')}
           </Typography>
@@ -1450,6 +1531,14 @@ function Planning() {
             })}
           </FormGroup>
         </Paper>
+      ) : null}
+
+      {planningUserRole === 'commercial' && currentUser?.id ? (
+        <CommercialWorkCalendarPanel
+          commercialId={String(currentUser.id)}
+          notify={notify}
+          subtitle="Ces fermetures s’appliquent à vos recalculs automatiques (onglet Planning)."
+        />
       ) : null}
 
       <Paper sx={{ mt: 3 }}>

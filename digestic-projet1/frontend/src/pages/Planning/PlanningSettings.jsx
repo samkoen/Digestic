@@ -1,11 +1,18 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Box,
   Button,
   Chip,
   CircularProgress,
+  FormControl,
   Grid,
+  InputLabel,
+  MenuItem,
   Paper,
+  Select,
   Table,
   TableBody,
   TableCell,
@@ -14,14 +21,16 @@ import {
   TableRow,
   TextField,
   Typography,
-  MenuItem,
 } from '@mui/material'
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import RestoreIcon from '@mui/icons-material/Restore'
 import SaveIcon from '@mui/icons-material/Save'
 import HistoryIcon from '@mui/icons-material/History'
 import { planningService } from '../../services/planningService'
+import { userService } from '../../services/userService'
 import { useNotifier } from '../../hooks/useNotifier'
 import { clearPlanningWeightsOverrides } from '../../utils/planningWeightsStorage'
+import CommercialWorkCalendarPanel from './CommercialWorkCalendarPanel'
 
 /** Libellés courts pour l’UI (les détails restent dans les infobulles / hints API). */
 const PARAM_LABEL_FR = {
@@ -85,13 +94,16 @@ function PlanningSettings() {
   const [activatingId, setActivatingId] = useState(null)
   const [manualSegmentMode, setManualSegmentMode] = useState('inherit')
   const [segmentModeSaving, setSegmentModeSaving] = useState(false)
+  const [calendarCommercials, setCalendarCommercials] = useState([])
+  const [calendarTargetId, setCalendarTargetId] = useState('')
 
   const reloadAll = useCallback(async () => {
-    const [defs, cfg, revList, runList] = await Promise.all([
+    const [defs, cfg, revList, runList, commRaw] = await Promise.all([
       planningService.getWeightDefaults(),
       planningService.getActiveWeightsConfig(),
       planningService.listWeightsRevisions(80),
       planningService.listPlanningRuns(25),
+      userService.getAll('commercial').catch(() => []),
     ])
     const w = defs?.weights ?? {}
     const f = Array.isArray(defs?.fields) ? defs.fields : []
@@ -105,6 +117,15 @@ function PlanningSettings() {
     setManualSegmentMode(cfg?.manual_planning_segment_mode === 'manual_revision' ? 'manual_revision' : 'inherit')
     setRevisions(Array.isArray(revList?.revisions) ? revList.revisions : [])
     setRuns(Array.isArray(runList?.runs) ? runList.runs : [])
+
+    const commList = Array.isArray(commRaw) ? commRaw : []
+    setCalendarCommercials(commList)
+    setCalendarTargetId((prev) => {
+      if (!commList.length) return ''
+      const prevOk = prev && commList.some((c) => String(c.id) === String(prev))
+      if (prevOk) return prev
+      return String(commList[0].id ?? '')
+    })
   }, [])
 
   useEffect(() => {
@@ -230,6 +251,13 @@ function PlanningSettings() {
     [activeRevision],
   )
 
+  const selectedCommercialLabel = useMemo(() => {
+    const c = calendarCommercials.find((x) => String(x.id) === String(calendarTargetId))
+    if (!c) return ''
+    const nm = `${c.first_name || ''} ${c.last_name || ''}`.trim()
+    return nm || String(calendarTargetId)
+  }, [calendarCommercials, calendarTargetId])
+
   if (loading) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight={200}>
@@ -268,177 +296,257 @@ function PlanningSettings() {
         {subtitle}
       </Typography>
 
-      <Paper sx={{ p: 2, mb: 3, maxWidth: 960 }}>
-        <Typography variant="subtitle1" gutterBottom>
-          Segments après changement manuel de date (fiche pharmacie)
-        </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          <strong>Mode A</strong> (<code>inherit</code>) : pas de nouveau segment. <strong>Mode B</strong> (
-          <code>manual_revision</code>) : segment dédié (révision sentinel « manuel »). Voir aussi{' '}
-          <code>backend/docs/planning_revision_segments_metier.md</code>.
-        </Typography>
-        <Box display="flex" flexWrap="wrap" gap={2} alignItems="center">
-          <TextField
-            select
-            label="Mode"
-            size="small"
-            sx={{ minWidth: 300 }}
-            value={manualSegmentMode}
-            onChange={(e) => setManualSegmentMode(e.target.value)}
-            InputLabelProps={{ shrink: true }}
-          >
-            <MenuItem value="inherit">Mode A — inherit</MenuItem>
-            <MenuItem value="manual_revision">Mode B — manual_revision</MenuItem>
-          </TextField>
-          <Button
-            variant="outlined"
-            onClick={() => void handleSaveManualSegmentMode()}
-            disabled={segmentModeSaving}
-          >
-            {segmentModeSaving ? <CircularProgress size={18} /> : 'Enregistrer le mode'}
-          </Button>
-        </Box>
-      </Paper>
-
-      <Paper sx={{ p: 3, maxWidth: 960, mb: 3 }}>
-        <TextField
-          fullWidth
-          size="small"
-          label="Libellé de la prochaine révision (optionnel)"
-          value={revisionLabel}
-          onChange={(e) => setRevisionLabel(e.target.value)}
-          sx={{ mb: 2 }}
-          helperText="Ex. « Essai mai » — aide à retrouver une version dans l’historique."
-        />
-        <Grid container spacing={2}>
-          {fields.map((f) => {
-            const label = PARAM_LABEL_FR[f.key] ?? f.key
-            return (
-              <Grid item xs={12} md={6} key={f.key}>
+      <Box sx={{ maxWidth: 1100 }}>
+        <Accordion sx={{ '&:before': { display: 'none' }, mb: 1, boxShadow: 1 }}>
+          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+            <Typography variant="subtitle1">
+              Segments après changement manuel de date (fiche pharmacie)
+            </Typography>
+          </AccordionSummary>
+          <AccordionDetails sx={{ pt: 0 }}>
+            <Paper sx={{ p: 2 }} variant="outlined">
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                <strong>Mode A</strong> (<code>inherit</code>) : pas de nouveau segment. <strong>Mode B</strong> (
+                <code>manual_revision</code>) : segment dédié (révision sentinel « manuel »). Voir aussi{' '}
+                <code>backend/docs/planning_revision_segments_metier.md</code>.
+              </Typography>
+              <Box display="flex" flexWrap="wrap" gap={2} alignItems="center">
                 <TextField
-                  fullWidth
+                  select
+                  label="Mode"
                   size="small"
-                  label={label}
-                  value={values[f.key] ?? ''}
-                  onChange={(e) => handleChange(f.key, e.target.value)}
-                  helperText={f.hint || `(${f.type_hint})`}
-                  inputProps={{
-                    ...(f.key === 'visits_max_per_day'
-                      ? { inputMode: 'numeric', min: 1, max: 200 }
-                      : {}),
-                  }}
-                />
+                  sx={{ minWidth: 300 }}
+                  value={manualSegmentMode}
+                  onChange={(e) => setManualSegmentMode(e.target.value)}
+                  InputLabelProps={{ shrink: true }}
+                >
+                  <MenuItem value="inherit">Mode A — inherit</MenuItem>
+                  <MenuItem value="manual_revision">Mode B — manual_revision</MenuItem>
+                </TextField>
+                <Button
+                  variant="outlined"
+                  onClick={() => void handleSaveManualSegmentMode()}
+                  disabled={segmentModeSaving}
+                >
+                  {segmentModeSaving ? <CircularProgress size={18} /> : 'Enregistrer le mode'}
+                </Button>
+              </Box>
+            </Paper>
+          </AccordionDetails>
+        </Accordion>
+
+        <Accordion sx={{ '&:before': { display: 'none' }, mb: 1, boxShadow: 1 }}>
+          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+            <Typography variant="subtitle1">Calendriers travail — commerciaux</Typography>
+          </AccordionSummary>
+          <AccordionDetails sx={{ pt: 0 }}>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+              Définir les journées fermées : le recalcul auto n’attribue pas une visite <em>flexible</em> sur ces jours ;
+              un RDV fixe peut toutefois vous y être imposé (alerte envoyée au commercial et aux admins).
+            </Typography>
+            {calendarCommercials.length ? (
+              <FormControl fullWidth size="small" sx={{ mb: 2 }}>
+                <InputLabel id="cal-commercial-label">Commercial</InputLabel>
+                <Select
+                  labelId="cal-commercial-label"
+                  label="Commercial"
+                  value={calendarTargetId}
+                  onChange={(e) => setCalendarTargetId(String(e.target.value))}
+                  MenuProps={{ PaperProps: { sx: { maxHeight: 360 } } }}
+                >
+                  {calendarCommercials.map((c) => {
+                    const sid = String(c.id)
+                    const lab = `${c.first_name || ''} ${c.last_name || ''}`.trim() || sid
+                    return (
+                      <MenuItem key={sid} value={sid}>
+                        {lab}
+                      </MenuItem>
+                    )
+                  })}
+                </Select>
+              </FormControl>
+            ) : (
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Aucun utilisateur avec le rôle commercial.
+              </Typography>
+            )}
+            {calendarTargetId ? (
+              <CommercialWorkCalendarPanel
+                commercialId={calendarTargetId}
+                notify={notify}
+                subtitle={
+                  selectedCommercialLabel
+                    ? `Édition du calendrier pour ${selectedCommercialLabel}.`
+                    : undefined
+                }
+              />
+            ) : null}
+          </AccordionDetails>
+        </Accordion>
+
+        <Accordion defaultExpanded sx={{ '&:before': { display: 'none' }, mb: 1, boxShadow: 1 }}>
+          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+            <Typography variant="subtitle1">
+              Révision des poids (créer et activer)
+            </Typography>
+          </AccordionSummary>
+          <AccordionDetails sx={{ pt: 0 }}>
+            <Paper sx={{ p: 3 }} variant="outlined">
+              <TextField
+                fullWidth
+                size="small"
+                label="Libellé de la prochaine révision (optionnel)"
+                value={revisionLabel}
+                onChange={(e) => setRevisionLabel(e.target.value)}
+                sx={{ mb: 2 }}
+                helperText="Ex. « Essai mai » — aide à retrouver une version dans l’historique."
+              />
+              <Grid container spacing={2}>
+                {fields.map((f) => {
+                  const label = PARAM_LABEL_FR[f.key] ?? f.key
+                  return (
+                    <Grid item xs={12} md={6} key={f.key}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        label={label}
+                        value={values[f.key] ?? ''}
+                        onChange={(e) => handleChange(f.key, e.target.value)}
+                        helperText={f.hint || `(${f.type_hint})`}
+                        inputProps={{
+                          ...(f.key === 'visits_max_per_day'
+                            ? { inputMode: 'numeric', min: 1, max: 200 }
+                            : {}),
+                        }}
+                      />
+                    </Grid>
+                  )
+                })}
               </Grid>
-            )
-          })}
-        </Grid>
 
-        <Box display="flex" flexWrap="wrap" gap={1} sx={{ mt: 3 }}>
-          <Button
-            variant="contained"
-            startIcon={saving ? <CircularProgress color="inherit" size={18} /> : <SaveIcon />}
-            onClick={() => void handleSave()}
-            disabled={saving}
-          >
-            Créer une révision et l’activer
-          </Button>
-          <Button
-            variant="outlined"
-            startIcon={<RestoreIcon />}
-            onClick={() => void handleResetActive()}
-            disabled={!serverWeights}
-          >
-            Recharger depuis la révision active
-          </Button>
-        </Box>
-      </Paper>
+              <Box display="flex" flexWrap="wrap" gap={1} sx={{ mt: 3 }}>
+                <Button
+                  variant="contained"
+                  startIcon={saving ? <CircularProgress color="inherit" size={18} /> : <SaveIcon />}
+                  onClick={() => void handleSave()}
+                  disabled={saving}
+                >
+                  Créer une révision et l’activer
+                </Button>
+                <Button
+                  variant="outlined"
+                  startIcon={<RestoreIcon />}
+                  onClick={() => void handleResetActive()}
+                  disabled={!serverWeights}
+                >
+                  Recharger depuis la révision active
+                </Button>
+              </Box>
+            </Paper>
+          </AccordionDetails>
+        </Accordion>
 
-      <Typography variant="h6" gutterBottom sx={{ mt: 2 }}>
-        Historique des révisions
-      </Typography>
-      <TableContainer component={Paper} sx={{ maxWidth: 1100, mb: 3 }}>
-        <Table size="small">
-          <TableHead>
-            <TableRow>
-              <TableCell>N°</TableCell>
-              <TableCell>Libellé</TableCell>
-              <TableCell>Créée le</TableCell>
-              <TableCell align="right">Action</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {revisions.map((r) => (
-              <TableRow key={r.id}>
-                <TableCell>
-                  <Chip size="small" label={`v${r.revision_number}`} sx={{ mr: 1 }} />
-                  {r.id === activeId ? <Chip size="small" color="success" label="Active" /> : null}
-                </TableCell>
-                <TableCell>{r.label || '—'}</TableCell>
-                <TableCell>{r.created_at ? String(r.created_at).replace('T', ' ').slice(0, 19) : '—'}</TableCell>
-                <TableCell align="right">
-                  <Button
-                    size="small"
-                    disabled={r.id === activeId || activatingId === r.id}
-                    onClick={() => void handleActivate(r.id)}
-                  >
-                    {activatingId === r.id ? '…' : 'Réactiver'}
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-            {!revisions.length ? (
-              <TableRow>
-                <TableCell colSpan={4}>
-                  <Typography variant="body2" color="text.secondary">
-                    Aucune révision.
-                  </Typography>
-                </TableCell>
-              </TableRow>
-            ) : null}
-          </TableBody>
-        </Table>
-      </TableContainer>
+        <Accordion sx={{ '&:before': { display: 'none' }, mb: 1, boxShadow: 1 }}>
+          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+            <Typography variant="subtitle1">Historique des révisions</Typography>
+          </AccordionSummary>
+          <AccordionDetails sx={{ pt: 0 }}>
+            <TableContainer component={Paper} sx={{ boxShadow: 0 }} variant="outlined">
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>N°</TableCell>
+                    <TableCell>Libellé</TableCell>
+                    <TableCell>Créée le</TableCell>
+                    <TableCell align="right">Action</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {revisions.map((r) => (
+                    <TableRow key={r.id}>
+                      <TableCell>
+                        <Chip size="small" label={`v${r.revision_number}`} sx={{ mr: 1 }} />
+                        {r.id === activeId ? <Chip size="small" color="success" label="Active" /> : null}
+                      </TableCell>
+                      <TableCell>{r.label || '—'}</TableCell>
+                      <TableCell>
+                        {r.created_at ? String(r.created_at).replace('T', ' ').slice(0, 19) : '—'}
+                      </TableCell>
+                      <TableCell align="right">
+                        <Button
+                          size="small"
+                          disabled={r.id === activeId || activatingId === r.id}
+                          onClick={() => void handleActivate(r.id)}
+                        >
+                          {activatingId === r.id ? '…' : 'Réactiver'}
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {!revisions.length ? (
+                    <TableRow>
+                      <TableCell colSpan={4}>
+                        <Typography variant="body2" color="text.secondary">
+                          Aucune révision.
+                        </Typography>
+                      </TableCell>
+                    </TableRow>
+                  ) : null}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </AccordionDetails>
+        </Accordion>
 
-      <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-        <HistoryIcon fontSize="small" /> Derniers recalculs (audit)
-      </Typography>
-      <TableContainer component={Paper} sx={{ maxWidth: 1100 }}>
-        <Table size="small">
-          <TableHead>
-            <TableRow>
-              <TableCell>Date</TableCell>
-              <TableCell>Réf.</TableCell>
-              <TableCell>Mode</TableCell>
-              <TableCell>Révision active au run</TableCell>
-              <TableCell align="right">Assign.</TableCell>
-              <TableCell>Surcharge req.</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {runs.map((run) => (
-              <TableRow key={run.id}>
-                <TableCell>{run.created_at ? String(run.created_at).replace('T', ' ').slice(0, 19) : '—'}</TableCell>
-                <TableCell>{run.reference_date}</TableCell>
-                <TableCell>{run.dry_run ? 'Prévisualisation' : 'Appliqué'}</TableCell>
-                <TableCell sx={{ maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {run.active_revision_id_at_run || '—'}
-                </TableCell>
-                <TableCell align="right">{run.assignments_count}</TableCell>
-                <TableCell>{run.weights_request_override ? 'oui' : 'non'}</TableCell>
-              </TableRow>
-            ))}
-            {!runs.length ? (
-              <TableRow>
-                <TableCell colSpan={6}>
-                  <Typography variant="body2" color="text.secondary">
-                    Aucun run enregistré.
-                  </Typography>
-                </TableCell>
-              </TableRow>
-            ) : null}
-          </TableBody>
-        </Table>
-      </TableContainer>
+        <Accordion sx={{ '&:before': { display: 'none' }, boxShadow: 1 }}>
+          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+            <Typography variant="subtitle1" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <HistoryIcon fontSize="small" /> Derniers recalculs (audit)
+            </Typography>
+          </AccordionSummary>
+          <AccordionDetails sx={{ pt: 0 }}>
+            <TableContainer component={Paper} sx={{ boxShadow: 0 }} variant="outlined">
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Date</TableCell>
+                    <TableCell>Réf.</TableCell>
+                    <TableCell>Mode</TableCell>
+                    <TableCell>Révision active au run</TableCell>
+                    <TableCell align="right">Assign.</TableCell>
+                    <TableCell>Surcharge req.</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {runs.map((run) => (
+                    <TableRow key={run.id}>
+                      <TableCell>
+                        {run.created_at ? String(run.created_at).replace('T', ' ').slice(0, 19) : '—'}
+                      </TableCell>
+                      <TableCell>{run.reference_date}</TableCell>
+                      <TableCell>{run.dry_run ? 'Prévisualisation' : 'Appliqué'}</TableCell>
+                      <TableCell sx={{ maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {run.active_revision_id_at_run || '—'}
+                      </TableCell>
+                      <TableCell align="right">{run.assignments_count}</TableCell>
+                      <TableCell>{run.weights_request_override ? 'oui' : 'non'}</TableCell>
+                    </TableRow>
+                  ))}
+                  {!runs.length ? (
+                    <TableRow>
+                      <TableCell colSpan={6}>
+                        <Typography variant="body2" color="text.secondary">
+                          Aucun run enregistré.
+                        </Typography>
+                      </TableCell>
+                    </TableRow>
+                  ) : null}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </AccordionDetails>
+        </Accordion>
+      </Box>
 
       {NotifierSnackbar}
     </Box>

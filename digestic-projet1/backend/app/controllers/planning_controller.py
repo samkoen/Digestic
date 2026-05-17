@@ -27,6 +27,10 @@ from app.services.pharmacy_planning_segments_service import (
     sync_segments_after_auto_planning_run,
 )
 from app.services.visit_planning_service import VisitPlanningService
+from app.services.commercial_planning_calendar_service import (
+    get_calendar_payload,
+    replace_commercial_calendar,
+)
 
 router = APIRouter()
 
@@ -117,6 +121,102 @@ class ManualPlanningSegmentModeBody(BaseModel):
         ...,
         description="`inherit` (Mode A) ou `manual_revision` (Mode B) — cf. docs/planning_revision_segments_metier.md.",
     )
+
+
+class WorkCalendarOffDateBody(BaseModel):
+    date: date
+    label: str | None = Field(default=None, max_length=255)
+
+
+class WorkCalendarPutBody(BaseModel):
+    """Journées fermées : weekday Python 0=lundi … 6=dimanche ; dates ISO pour fermetures ponctuelles."""
+
+    off_weekdays: list[int] = Field(default_factory=list)
+    off_dates: list[WorkCalendarOffDateBody] = Field(default_factory=list)
+
+    @field_validator("off_weekdays", mode="after")
+    @classmethod
+    def _validate_weekdays(cls, v: list[int]) -> list[int]:
+        for x in v:
+            xi = int(x)
+            if xi < 0 or xi > 6:
+                raise ValueError("weekday doit être entre 0 (lundi) et 6 (dimanche).")
+        return sorted({int(x) for x in v})
+
+
+def _calendar_target_user_or_404(db: Session, cid: uuid.UUID) -> orm.User:
+    u = db.get(orm.User, cid)
+    if u is None:
+        raise HTTPException(status_code=404, detail="Utilisateur introuvable.")
+    if (str(u.role or "").strip()).lower() != "commercial":
+        raise HTTPException(
+            status_code=400,
+            detail="Le calendrier planning automatique concerne uniquement les comptes « commercial ».",
+        )
+    return u
+
+
+def _enforce_work_calendar_access(request: Request, commercial_uuid: uuid.UUID) -> None:
+    role = (session_user_role(request) or "").strip()
+    uid = require_user_id(request)
+    if role == ADMIN:
+        return
+    if role == "commercial":
+        try:
+            if uuid.UUID(str(uid).strip()) == commercial_uuid:
+                return
+        except ValueError:
+            pass
+        raise HTTPException(
+            status_code=403,
+            detail="Un commercial ne peut modifier que son propre calendrier.",
+        )
+    raise HTTPException(status_code=403, detail="Rôle non autorisé pour cette opération.")
+
+
+@router.get("/work-calendar/{commercial_id}")
+def get_planning_work_calendar(
+    request: Request,
+    commercial_id: str,
+    db: Session = Depends(get_db),
+):
+    require_user_id(request)
+    try:
+        cid = uuid.UUID(str(commercial_id).strip())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="commercial_id invalide.") from e
+    _enforce_work_calendar_access(request, cid)
+    _calendar_target_user_or_404(db, cid)
+    return get_calendar_payload(db, cid)
+
+
+@router.put("/work-calendar/{commercial_id}")
+def put_planning_work_calendar(
+    request: Request,
+    commercial_id: str,
+    body: WorkCalendarPutBody,
+    db: Session = Depends(get_db),
+):
+    require_user_id(request)
+    try:
+        cid = uuid.UUID(str(commercial_id).strip())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="commercial_id invalide.") from e
+    _enforce_work_calendar_access(request, cid)
+    _calendar_target_user_or_404(db, cid)
+    pairs: list[tuple[date, str | None]] = [(o.date, o.label) for o in body.off_dates]
+    replace_commercial_calendar(
+        db,
+        commercial_user_id=cid,
+        off_weekdays=body.off_weekdays,
+        off_dates_payload=pairs,
+    )
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return get_calendar_payload(db, cid)
 
 
 @router.post("/run")

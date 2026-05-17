@@ -17,11 +17,13 @@ class EmailTemplateCatalogEntry:
 TEMPLATE_DELIVERY_NOTE_SEND = "delivery_note_send"
 TEMPLATE_INVOICE_SEND = "invoice_send"
 TEMPLATE_INVOICE_UNPAID_REMINDER = "invoice_unpaid_reminder"
+TEMPLATE_PLANNING_RDV_HARD_CAPACITY = "planning_rdv_hard_capacity_alert"
 
 KNOWN_TEMPLATE_KEYS = frozenset({
     TEMPLATE_DELIVERY_NOTE_SEND,
     TEMPLATE_INVOICE_SEND,
     TEMPLATE_INVOICE_UNPAID_REMINDER,
+    TEMPLATE_PLANNING_RDV_HARD_CAPACITY,
 })
 
 EMAIL_TEMPLATE_CATALOG: tuple[EmailTemplateCatalogEntry, ...] = (
@@ -61,6 +63,20 @@ EMAIL_TEMPLATE_CATALOG: tuple[EmailTemplateCatalogEntry, ...] = (
             "invoice_date",
             "due_date",
             "days_overdue",
+        ),
+    ),
+    EmailTemplateCatalogEntry(
+        key=TEMPLATE_PLANNING_RDV_HARD_CAPACITY,
+        label_fr="Alerte planning — RDV fixe vs charge journalière",
+        description_fr=(
+            "Envoyé automatiquement après un recalcul planning réel lorsqu’au moins une pharmacie "
+            "avec RDV dur tombe sur un jour déjà à capacité maximale."
+        ),
+        placeholders=(
+            "body_intro",
+            "reference_date",
+            "horizon_days",
+            "items_html",
         ),
     ),
 )

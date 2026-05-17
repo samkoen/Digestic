@@ -26,6 +26,7 @@ from app.domain.email_template_catalog import (
     TEMPLATE_DELIVERY_NOTE_SEND,
     TEMPLATE_INVOICE_SEND,
     TEMPLATE_INVOICE_UNPAID_REMINDER,
+    TEMPLATE_PLANNING_RDV_HARD_CAPACITY,
 )
 from app.repositories.email_template_repository import EmailTemplateRepository
 from app.utils.email_template_render import interpolate_template
@@ -245,6 +246,40 @@ class EmailService:
             plain_body_fallback=body_fallback,
         )
         return self._log_send(to_email, subject, html, kind="rappel_facture_impayée", attachments=())
+
+    def send_planning_rdv_hard_capacity_alert(
+        self,
+        to_email: str,
+        *,
+        body_intro: str,
+        reference_date_iso: str,
+        horizon_days: int,
+        items_html: str,
+    ) -> bool:
+        ctx = {
+            "body_intro": body_intro,
+            "reference_date": reference_date_iso,
+            "horizon_days": str(int(horizon_days)),
+            "items_html": items_html,
+        }
+        subject_fb = "[Digestic] Alerte planning — RDV fixe / charge journalière"
+        plain_fb = (
+            "{{ body_intro }}\n\nRéférence planning : {{ reference_date }} — "
+            "horizon {{ horizon_days }} jour(s).\n\n(détail des pharmacies dans la version HTML)"
+        )
+        subject, html = self._render_or_fallback(
+            template_key=TEMPLATE_PLANNING_RDV_HARD_CAPACITY,
+            variables=ctx,
+            subject_fallback=subject_fb,
+            plain_body_fallback=plain_fb,
+        )
+        return self._log_send(
+            (to_email or "").strip(),
+            subject,
+            html,
+            kind="planning_rdv_dur",
+            attachments=(),
+        )
 
     def _log_send(
         self,

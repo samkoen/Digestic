@@ -1,7 +1,7 @@
 import uuid
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 import app.db.models as orm
@@ -16,6 +16,42 @@ class VisitReportRepository:
     def find_all(self) -> list[VisitReport]:
         rows = self._db.execute(select(orm.VisitReport)).scalars().all()
         return [mp.report_orm_to_domain(r) for r in rows]
+
+    def find_latest_deposit_row_per_pharmacy(
+        self, pharmacy_ids: list[uuid.UUID]
+    ) -> list[tuple[uuid.UUID, object, int]]:
+        """Pour chaque pharmacie : ligne la plus récente avec dépôt (has_deposit et bouteilles > 0)."""
+        if not pharmacy_ids:
+            return []
+        rn = (
+            func.row_number()
+            .over(
+                partition_by=orm.VisitReport.pharmacy_id,
+                order_by=orm.VisitReport.visit_date.desc(),
+            )
+            .label("rn")
+        )
+        subq = (
+            select(
+                orm.VisitReport.pharmacy_id,
+                orm.VisitReport.visit_date,
+                orm.VisitReport.bottles_deposited,
+                rn,
+            )
+            .where(
+                orm.VisitReport.pharmacy_id.in_(pharmacy_ids),
+                orm.VisitReport.has_deposit.is_(True),
+                orm.VisitReport.bottles_deposited > 0,
+            )
+            .subquery()
+        )
+        stmt = select(
+            subq.c.pharmacy_id,
+            subq.c.visit_date,
+            subq.c.bottles_deposited,
+        ).where(subq.c.rn == 1)
+        rows = self._db.execute(stmt).all()
+        return [(r[0], r[1], int(r[2] or 0)) for r in rows]
 
     def find_by_id(self, id_: str) -> Optional[VisitReport]:
         try:

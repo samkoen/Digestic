@@ -72,4 +72,20 @@ export const planningService = {
     )
     return response.data
   },
+
+  getWorkCalendar: async (commercialId) => {
+    const response = await api.get(`/planning/work-calendar/${commercialId}`, {
+      withCredentials: true,
+    })
+    return response.data
+  },
+
+  putWorkCalendar: async (commercialId, { off_weekdays = [], off_dates = [] }) => {
+    const response = await api.put(
+      `/planning/work-calendar/${commercialId}`,
+      { off_weekdays, off_dates },
+      { withCredentials: true },
+    )
+    return response.data
+  },
 }

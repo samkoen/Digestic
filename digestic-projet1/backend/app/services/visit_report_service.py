@@ -1,4 +1,5 @@
-from typing import List, Optional
+import uuid
+from typing import Any, List, Optional
 
 from sqlalchemy.orm import Session
 
@@ -266,7 +267,34 @@ class VisitReportService:
 
     def get_reports_by_pharmacy(self, pharmacy_id: str) -> List[VisitReport]:
         return self.visit_report_repo.find_by_pharmacy(pharmacy_id)
-    
+
+    def get_last_deposits_for_planning(self, pharmacy_ids: list[str]) -> list[dict[str, Any]]:
+        """Dernier rapport avec dépôt (>0 bouteilles) par pharmacie — pour grille Planning uniquement."""
+        MAX_IDS = 1500
+        trimmed = pharmacy_ids[:MAX_IDS]
+        seen: set[uuid.UUID] = set()
+        parsed: list[uuid.UUID] = []
+        for raw in trimmed:
+            try:
+                u = uuid.UUID(str(raw).strip())
+            except ValueError:
+                continue
+            if u not in seen:
+                seen.add(u)
+                parsed.append(u)
+        rows = self.visit_report_repo.find_latest_deposit_row_per_pharmacy(parsed)
+        items: list[dict[str, Any]] = []
+        for pharmacy_id, visit_date, bottles in rows:
+            vd = visit_date.isoformat() if hasattr(visit_date, "isoformat") else str(visit_date)
+            items.append(
+                {
+                    "pharmacy_id": str(pharmacy_id),
+                    "visit_date": vd,
+                    "bottles_deposited": int(bottles),
+                }
+            )
+        return items
+
     def sync_reports(self) -> int:
         """Synchronise tous les rapports non synchronisés"""
         unsynced = self.get_unsynced_reports()

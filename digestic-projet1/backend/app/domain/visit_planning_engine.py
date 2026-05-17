@@ -195,16 +195,31 @@ def _clamp(day: date, start: date, end: date) -> date:
     return day
 
 
+def _merge_planning_alert(prev: str | None, msg: str) -> str:
+    if not msg:
+        return prev or ""
+    cur = [b.strip() for b in (prev or "").split(";") if b.strip()]
+    if msg not in cur:
+        cur.append(msg)
+    return ";".join(cur)
+
+
 def run_planning_assignment(
     rows: list[PharmacyPlanningInputs],
     reference_date: date,
     horizon_days: int,
     weights: PlanningWeights,
+    working_dates: frozenset[date] | None = None,
 ) -> PlanningResult:
     if horizon_days < 1:
         horizon_days = 1
     horizon = [reference_date + timedelta(days=i) for i in range(horizon_days)]
     start_d, end_d = horizon[0], horizon[-1]
+    cand_days = [d for d in horizon if working_dates is None or d in working_dates]
+    if not cand_days:
+        cand_days = list(horizon)
+
+    cap = weights.visits_max_per_day if weights.visits_max_per_day >= 1 else 14
 
     alerts: dict[str, str] = {}
     assignments: dict[str, date] = {}
@@ -227,37 +242,59 @@ def run_planning_assignment(
 
     for p in sorted(hard_group, key=lambda x: x.planning_hard_rdv_date or reference_date):
         target = _clamp(p.planning_hard_rdv_date or reference_date, start_d, end_d)
-        if day_load.get(target, 0) >= weights.visits_max_per_day:
-            alerts[p.id] = "rdv_dur_capacity_depassee_assigne_quand_meme"
+        if day_load.get(target, 0) >= cap:
+            alerts[p.id] = _merge_planning_alert(
+                alerts.get(p.id),
+                "rdv_dur_capacity_depassee_assigne_quand_meme",
+            )
+        if working_dates is not None and target not in working_dates:
+            alerts[p.id] = _merge_planning_alert(
+                alerts.get(p.id),
+                "rdv_dur_sur_jour_non_travaille",
+            )
         assignments[p.id] = target
         _register_day_visit(p, target, day_load, district_count, day_centroids)
 
     def prio_key(x: PharmacyPlanningInputs) -> float:
         return max(
             _base_need_for_day(x, d, reference_date, weights)
-            for d in horizon
+            for d in cand_days
         )
 
+    def _pick_best_scored_day(
+        p_: PharmacyPlanningInputs,
+        candidate_days_: list[date],
+    ) -> date:
+        best_d: date | None = None
+        best_scr = -1e18
+        for d in candidate_days_:
+            need = _base_need_for_day(p_, d, reference_date, weights)
+            geo_t = _geo_term(p_, d, day_centroids, weights)
+            dens_t = _density_bonus(p_, d, district_count, weights)
+            total = need + geo_t + dens_t
+            if total > best_scr:
+                best_scr = total
+                best_d = d
+        assert best_d is not None
+        return best_d
+
     flex_sorted = sorted(flex_group, key=prio_key, reverse=True)
+    skipped_capacity_flex_ids: list[str] = []
 
     for p in flex_sorted:
-        best_day: date | None = None
-        best_score = -1e18
-        for d in horizon:
-            need = _base_need_for_day(p, d, reference_date, weights)
-            geo_t = _geo_term(p, d, day_centroids, weights)
-            dens_t = _density_bonus(p, d, district_count, weights)
-            cap_penalty = 0.0
-            if day_load.get(d, 0) >= weights.visits_max_per_day:
-                cap_penalty = -5000.0
-            total = need + geo_t + dens_t + cap_penalty
-            if total > best_score:
-                best_score = total
-                best_day = d
-        if best_day is None:
-            best_day = horizon[0]
-        if day_load.get(best_day, 0) >= weights.visits_max_per_day:
-            alerts[p.id] = "charge_max_journaliere_glouton_fallback"
+        room_days = [d for d in cand_days if day_load.get(d, 0) < cap]
+        if room_days:
+            best_day = _pick_best_scored_day(p, room_days)
+        else:
+            # Plus de créneaux sous le plafond sur les **jours où le commercial peut être planifié**
+            # (`cand_days`, calendrier inclus). Pas de débordement sur les jours fermés (congés, weekend…).
+            skipped_capacity_flex_ids.append(str(p.id))
+            alerts[p.id] = _merge_planning_alert(
+                alerts.get(p.id),
+                "planning_cap_horizon_saturation_skip",
+            )
+            continue
+
         assignments[p.id] = best_day
         _register_day_visit(p, best_day, day_load, district_count, day_centroids)
 
@@ -266,7 +303,11 @@ def run_planning_assignment(
         alerts=alerts,
         diagnostics={
             "horizon": [d.isoformat() for d in horizon],
+            "candidate_days": [d.isoformat() for d in cand_days],
+            "working_dates_filter_applied": working_dates is not None,
             "day_load": {k.isoformat(): v for k, v in day_load.items()},
+            "skipped_capacity_flex_ids": skipped_capacity_flex_ids,
+            "skipped_capacity_flex_count": len(skipped_capacity_flex_ids),
         },
     )
 
