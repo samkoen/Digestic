@@ -57,9 +57,21 @@ function Login() {
       >
         <Card sx={{ width: '100%', maxWidth: 400 }}>
           <CardContent>
-            <Typography variant="h4" component="h1" gutterBottom align="center">
-              GRCP
-            </Typography>
+            <Box
+              display="flex"
+              alignItems="baseline"
+              justifyContent="center"
+              gap={1}
+              flexWrap="wrap"
+              sx={{ mb: 1 }}
+            >
+              <Typography variant="h4" component="h1">
+                Espaces Pharmacies
+              </Typography>
+              <Typography variant="subtitle1" component="span" color="text.secondary">
+                Planning et suivi des visites pharmacies
+              </Typography>
+            </Box>
             <Typography variant="h6" component="h2" gutterBottom align="center" color="text.secondary">
               Connexion
             </Typography>

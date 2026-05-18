@@ -20,14 +20,12 @@ import DashboardIcon from '@mui/icons-material/Dashboard'
 import LocalPharmacyIcon from '@mui/icons-material/LocalPharmacy'
 import TuneIcon from '@mui/icons-material/Tune'
 import CalendarTodayIcon from '@mui/icons-material/CalendarToday'
-import AssessmentIcon from '@mui/icons-material/Assessment'
 import ReceiptIcon from '@mui/icons-material/Receipt'
 import PeopleIcon from '@mui/icons-material/People'
 import LocalShippingIcon from '@mui/icons-material/LocalShipping'
 import WarehouseIcon from '@mui/icons-material/Warehouse'
 import Inventory2Icon from '@mui/icons-material/Inventory2'
 import MarkEmailUnreadIcon from '@mui/icons-material/MarkEmailUnread'
-import SettingsSuggestIcon from '@mui/icons-material/SettingsSuggest'
 import LogoutIcon from '@mui/icons-material/Logout'
 import { authService } from '../../services/authService'
 
@@ -63,8 +61,12 @@ function Layout({ children }) {
     const baseItems = [
       { text: 'Tableau de bord', icon: <DashboardIcon />, path: '/' },
       { text: 'Pharmacies', icon: <LocalPharmacyIcon />, path: '/pharmacies' },
-      { text: 'Planning', icon: <CalendarTodayIcon />, path: '/planning' },
-      { text: 'Évaluation terrain', icon: <AssessmentIcon />, path: '/planning/evaluation' },
+      {
+        text: 'Planning',
+        icon: <CalendarTodayIcon />,
+        path: '/planning',
+        matchPathPrefix: '/planning',
+      },
       { text: 'Factures', icon: <ReceiptIcon />, path: '/invoices' },
     ]
 
@@ -77,11 +79,6 @@ function Layout({ children }) {
       })
       baseItems.push({ text: 'Dépôts', icon: <WarehouseIcon />, path: '/depots' })
       baseItems.push({ text: 'Produits', icon: <Inventory2Icon />, path: '/products' })
-      baseItems.push({
-        text: 'Paramètres planning',
-        icon: <SettingsSuggestIcon />,
-        path: '/planning/parametres',
-      })
       baseItems.push({ text: 'Commerciaux', icon: <PeopleIcon />, path: '/users' })
       baseItems.push({
         text: "Modèles d'e-mail",
@@ -113,24 +110,24 @@ function Layout({ children }) {
         }}
       >
         <Typography variant="h6" noWrap component="div">
-          GRCP
+          Digestic
         </Typography>
       </Toolbar>
       <Divider />
       <List>
-        {menuItems.map((item) => (
-          <ListItem key={item.text} disablePadding>
-            <ListItemButton
-              selected={location.pathname === item.path}
-              onClick={() => handleNavigation(item.path)}
-            >
-              <ListItemIcon sx={{ color: location.pathname === item.path ? '#1976d2' : 'inherit' }}>
-                {item.icon}
-              </ListItemIcon>
-              <ListItemText primary={item.text} />
-            </ListItemButton>
-          </ListItem>
-        ))}
+        {menuItems.map((item) => {
+          const selected = item.matchPathPrefix
+            ? location.pathname.startsWith(item.matchPathPrefix)
+            : location.pathname === item.path
+          return (
+            <ListItem key={item.text} disablePadding>
+              <ListItemButton selected={selected} onClick={() => handleNavigation(item.path)}>
+                <ListItemIcon sx={{ color: selected ? '#1976d2' : 'inherit' }}>{item.icon}</ListItemIcon>
+                <ListItemText primary={item.text} />
+              </ListItemButton>
+            </ListItem>
+          )
+        })}
       </List>
     </Box>
   )
@@ -156,9 +153,24 @@ function Layout({ children }) {
             <MenuIcon />
           </IconButton>
           <Box display="flex" justifyContent="space-between" alignItems="center" width="100%">
-            <Typography variant="h6" noWrap component="div">
-              Gestion Relation Commerciale Pharmacie
-            </Typography>
+            <Box
+              display="flex"
+              alignItems="baseline"
+              gap={1}
+              flexWrap="wrap"
+              sx={{ minWidth: 0 }}
+            >
+              <Typography variant="h6" noWrap component="div">
+                Espaces Pharmacies
+              </Typography>
+              <Typography
+                variant="body2"
+                component="span"
+                sx={{ color: 'rgba(255,255,255,0.85)', whiteSpace: { sm: 'nowrap' } }}
+              >
+                Planning et suivi des visites pharmacies
+              </Typography>
+            </Box>
             {user && (
               <Box display="flex" alignItems="center" gap={2}>
                 <Typography variant="body2">

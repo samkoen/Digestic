@@ -7,6 +7,7 @@ import Pharmacies from './pages/Pharmacies/Pharmacies'
 import PharmacyAdvancedFiltersPage from './pages/Pharmacies/PharmacyAdvancedFiltersPage'
 import PharmacyDetail from './pages/Pharmacies/PharmacyDetail'
 import Planning from './pages/Planning/Planning'
+import PlanningLayout from './pages/Planning/PlanningLayout'
 import PlanningEvaluation from './pages/Planning/PlanningEvaluation'
 import PlanningSettings from './pages/Planning/PlanningSettings'
 import Invoices from './pages/Invoices/Invoices'
@@ -80,16 +81,18 @@ function App() {
                   }
                 />
                 <Route path="/pharmacies/:id" element={<PharmacyDetail />} />
-                <Route path="/planning" element={<Planning />} />
-                <Route path="/planning/evaluation" element={<PlanningEvaluation />} />
-                <Route
-                  path="/planning/parametres"
-                  element={
-                    <PrivateRoute adminOnly>
-                      <PlanningSettings />
-                    </PrivateRoute>
-                  }
-                />
+                <Route path="/planning" element={<PlanningLayout />}>
+                  <Route index element={<Planning />} />
+                  <Route path="evaluation" element={<PlanningEvaluation />} />
+                  <Route
+                    path="parametres"
+                    element={
+                      <PrivateRoute adminOnly>
+                        <PlanningSettings />
+                      </PrivateRoute>
+                    }
+                  />
+                </Route>
                 <Route path="/invoices" element={<Invoices />} />
                 <Route path="/delivery-notes" element={<DeliveryNotes />} />
                 <Route
