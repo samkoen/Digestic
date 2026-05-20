@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import {
   Box,
@@ -14,6 +14,10 @@ import {
   ListItemIcon,
   ListItemText,
   CssBaseline,
+  Avatar,
+  Chip,
+  alpha,
+  useTheme,
 } from '@mui/material'
 import MenuIcon from '@mui/icons-material/Menu'
 import DashboardIcon from '@mui/icons-material/Dashboard'
@@ -28,10 +32,19 @@ import Inventory2Icon from '@mui/icons-material/Inventory2'
 import MarkEmailUnreadIcon from '@mui/icons-material/MarkEmailUnread'
 import LogoutIcon from '@mui/icons-material/Logout'
 import { authService } from '../../services/authService'
+import { sidebarWidth } from '../../theme/theme'
 
-const drawerWidth = 240
+function userInitials(user) {
+  if (!user) return '?'
+  const parts = (user.full_name || user.email || '').trim().split(/\s+/)
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+  }
+  return (parts[0]?.[0] || '?').toUpperCase()
+}
 
 function Layout({ children }) {
+  const theme = useTheme()
   const [mobileOpen, setMobileOpen] = useState(false)
   const [user, setUser] = useState(null)
   const navigate = useNavigate()
@@ -56,8 +69,7 @@ function Layout({ children }) {
     }
   }
 
-  // Menu items selon le rôle
-  const getMenuItems = () => {
+  const menuItems = useMemo(() => {
     const baseItems = [
       { text: 'Tableau de bord', icon: <DashboardIcon />, path: '/' },
       { text: 'Pharmacies', icon: <LocalPharmacyIcon />, path: '/pharmacies' },
@@ -73,7 +85,7 @@ function Layout({ children }) {
     if (user?.role === 'admin') {
       baseItems.push({ text: 'Bons de livraison', icon: <LocalShippingIcon />, path: '/delivery-notes' })
       baseItems.push({
-        text: 'Filtres avancés (pharmacies)',
+        text: 'Filtres avancés',
         icon: <TuneIcon />,
         path: '/pharmacies/advanced-filters',
       })
@@ -88,9 +100,7 @@ function Layout({ children }) {
     }
 
     return baseItems
-  }
-
-  const menuItems = getMenuItems()
+  }, [user?.role])
 
   const handleDrawerToggle = () => {
     setMobileOpen(!mobileOpen)
@@ -101,48 +111,123 @@ function Layout({ children }) {
     setMobileOpen(false)
   }
 
-  const drawer = (
-    <Box>
-      <Toolbar
+  const drawerContent = (
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <Box
         sx={{
-          backgroundColor: '#1976d2',
-          color: 'white',
+          px: 2.5,
+          py: 2.5,
+          background: `linear-gradient(135deg, ${theme.palette.primary.dark} 0%, ${theme.palette.primary.main} 100%)`,
+          color: 'primary.contrastText',
         }}
       >
-        <Typography variant="h6" noWrap component="div">
+        <Typography variant="h6" fontWeight={700} letterSpacing="-0.02em">
           Digestic
         </Typography>
-      </Toolbar>
-      <Divider />
-      <List>
+        <Typography variant="caption" sx={{ opacity: 0.9, display: 'block', mt: 0.25 }}>
+          Espaces Pharmacies
+        </Typography>
+      </Box>
+      <List sx={{ flex: 1, px: 1.5, py: 2 }}>
         {menuItems.map((item) => {
           const selected = item.matchPathPrefix
             ? location.pathname.startsWith(item.matchPathPrefix)
             : location.pathname === item.path
           return (
-            <ListItem key={item.text} disablePadding>
-              <ListItemButton selected={selected} onClick={() => handleNavigation(item.path)}>
-                <ListItemIcon sx={{ color: selected ? '#1976d2' : 'inherit' }}>{item.icon}</ListItemIcon>
-                <ListItemText primary={item.text} />
+            <ListItem key={item.text} disablePadding sx={{ mb: 0.5 }}>
+              <ListItemButton
+                selected={selected}
+                onClick={() => handleNavigation(item.path)}
+                sx={{
+                  borderRadius: 2,
+                  py: 1.1,
+                  '&.Mui-selected': {
+                    bgcolor: alpha(theme.palette.primary.main, 0.12),
+                    color: 'primary.dark',
+                    '&:hover': { bgcolor: alpha(theme.palette.primary.main, 0.16) },
+                    '& .MuiListItemIcon-root': { color: 'primary.main' },
+                  },
+                  '& .MuiListItemIcon-root': {
+                    minWidth: 40,
+                    color: selected ? 'primary.main' : 'text.secondary',
+                  },
+                }}
+              >
+                <ListItemIcon>{item.icon}</ListItemIcon>
+                <ListItemText
+                  primary={item.text}
+                  primaryTypographyProps={{
+                    fontSize: '0.9rem',
+                    fontWeight: selected ? 600 : 500,
+                  }}
+                />
               </ListItemButton>
             </ListItem>
           )
         })}
       </List>
+      {user && (
+        <>
+          <Divider />
+          <Box sx={{ p: 2 }}>
+            <Box display="flex" alignItems="center" gap={1.5}>
+              <Avatar
+                sx={{
+                  width: 36,
+                  height: 36,
+                  bgcolor: 'primary.main',
+                  fontSize: '0.85rem',
+                  fontWeight: 700,
+                }}
+              >
+                {userInitials(user)}
+              </Avatar>
+              <Box sx={{ minWidth: 0, flex: 1 }}>
+                <Typography variant="body2" fontWeight={600} noWrap>
+                  {user.full_name}
+                </Typography>
+                <Chip
+                  label={user.role === 'admin' ? 'Admin' : 'Commercial'}
+                  size="small"
+                  sx={{
+                    mt: 0.5,
+                    height: 20,
+                    fontSize: '0.65rem',
+                    bgcolor: alpha(theme.palette.primary.main, 0.1),
+                    color: 'primary.dark',
+                  }}
+                />
+              </Box>
+            </Box>
+          </Box>
+        </>
+      )}
     </Box>
   )
 
+  const drawerPaperSx = {
+    boxSizing: 'border-box',
+    width: sidebarWidth,
+    borderRight: `1px solid ${theme.palette.divider}`,
+    bgcolor: 'background.paper',
+  }
+
   return (
-    <Box sx={{ display: 'flex' }}>
+    <Box sx={{ display: 'flex', minHeight: '100vh' }}>
       <CssBaseline />
       <AppBar
         position="fixed"
+        elevation={0}
         sx={{
-          width: { sm: `calc(100% - ${drawerWidth}px)` },
-          ml: { sm: `${drawerWidth}px` },
+          width: { sm: `calc(100% - ${sidebarWidth}px)` },
+          ml: { sm: `${sidebarWidth}px` },
+          bgcolor: alpha(theme.palette.background.paper, 0.85),
+          backdropFilter: 'blur(12px)',
+          color: 'text.primary',
+          borderBottom: `1px solid ${theme.palette.divider}`,
         }}
       >
-        <Toolbar>
+        <Toolbar sx={{ minHeight: { xs: 56, sm: 64 } }}>
           <IconButton
             color="inherit"
             aria-label="open drawer"
@@ -152,83 +237,87 @@ function Layout({ children }) {
           >
             <MenuIcon />
           </IconButton>
-          <Box display="flex" justifyContent="space-between" alignItems="center" width="100%">
-            <Box
-              display="flex"
-              alignItems="baseline"
-              gap={1}
-              flexWrap="wrap"
-              sx={{ minWidth: 0 }}
-            >
-              <Typography variant="h6" noWrap component="div">
+          <Box
+            display="flex"
+            justifyContent="space-between"
+            alignItems="center"
+            width="100%"
+            gap={2}
+          >
+            <Box sx={{ minWidth: 0 }}>
+              <Typography variant="h6" fontWeight={700} noWrap>
                 Espaces Pharmacies
               </Typography>
-              <Typography
-                variant="body2"
-                component="span"
-                sx={{ color: 'rgba(255,255,255,0.85)', whiteSpace: { sm: 'nowrap' } }}
-              >
+              <Typography variant="caption" color="text.secondary" noWrap sx={{ display: { xs: 'none', md: 'block' } }}>
                 Planning et suivi des visites pharmacies
               </Typography>
             </Box>
             {user && (
-              <Box display="flex" alignItems="center" gap={2}>
-                <Typography variant="body2">
-                  {user.full_name} ({user.role === 'admin' ? 'Admin' : 'Commercial'})
-                </Typography>
-                <IconButton color="inherit" onClick={handleLogout} size="small">
-                  <LogoutIcon />
+              <Box display="flex" alignItems="center" gap={1}>
+                <Box sx={{ textAlign: 'right', display: { xs: 'none', sm: 'block' } }}>
+                  <Typography variant="body2" fontWeight={600}>
+                    {user.full_name}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {user.role === 'admin' ? 'Administrateur' : 'Commercial'}
+                  </Typography>
+                </Box>
+                <IconButton
+                  onClick={handleLogout}
+                  size="small"
+                  aria-label="Déconnexion"
+                  sx={{
+                    bgcolor: alpha(theme.palette.error.main, 0.08),
+                    color: 'error.main',
+                    '&:hover': { bgcolor: alpha(theme.palette.error.main, 0.14) },
+                  }}
+                >
+                  <LogoutIcon fontSize="small" />
                 </IconButton>
               </Box>
             )}
           </Box>
         </Toolbar>
       </AppBar>
-      <Box
-        component="nav"
-        sx={{ width: { sm: drawerWidth }, flexShrink: { sm: 0 } }}
-      >
+      <Box component="nav" sx={{ width: { sm: sidebarWidth }, flexShrink: { sm: 0 } }}>
         <Drawer
           variant="temporary"
           open={mobileOpen}
           onClose={handleDrawerToggle}
-          ModalProps={{
-            keepMounted: true,
-          }}
+          ModalProps={{ keepMounted: true }}
           sx={{
             display: { xs: 'block', sm: 'none' },
-            '& .MuiDrawer-paper': { boxSizing: 'border-box', width: drawerWidth },
+            '& .MuiDrawer-paper': drawerPaperSx,
           }}
         >
-          {drawer}
+          {drawerContent}
         </Drawer>
         <Drawer
           variant="permanent"
           sx={{
             display: { xs: 'none', sm: 'block' },
-            '& .MuiDrawer-paper': { boxSizing: 'border-box', width: drawerWidth },
+            '& .MuiDrawer-paper': drawerPaperSx,
           }}
           open
         >
-          {drawer}
+          {drawerContent}
         </Drawer>
       </Box>
       <Box
         component="main"
         sx={{
           flexGrow: 1,
-          p: 3,
-          width: { sm: `calc(100% - ${drawerWidth}px)` },
+          p: { xs: 2, sm: 3 },
+          width: { sm: `calc(100% - ${sidebarWidth}px)` },
           minHeight: '100vh',
-          backgroundColor: '#f5f5f5',
+          bgcolor: 'background.default',
         }}
       >
-        <Toolbar />
-        {children}
+        <Toolbar sx={{ minHeight: { xs: 56, sm: 64 } }} />
+        <Box className="page-enter">{children}</Box>
       </Box>
     </Box>
   )
 }
 
 export default Layout
-

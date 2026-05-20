@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { Box, Tab, Tabs } from '@mui/material'
+import { Box, Paper, Tab, Tabs } from '@mui/material'
 
 function readStoredUser() {
   try {
@@ -54,19 +54,20 @@ function PlanningLayout() {
 
   return (
     <Box>
-      <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
+      <Paper elevation={0} sx={{ mb: 3, border: 1, borderColor: 'divider' }}>
         <Tabs
           value={safeIndex}
           onChange={handleTabChange}
           variant="scrollable"
           allowScrollButtonsMobile
           aria-label="Sections planning"
+          sx={{ px: 1 }}
         >
           {tabs.map((t) => (
             <Tab key={t.path} label={t.label} />
           ))}
         </Tabs>
-      </Box>
+      </Paper>
       <Outlet />
     </Box>
   )

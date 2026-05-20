@@ -17,6 +17,7 @@ import Depots from './pages/Depots/Depots'
 import Products from './pages/Products/Products'
 import EmailTemplates from './pages/EmailTemplates/EmailTemplates'
 import { authService } from './services/authService'
+import AppLoadingScreen from './components/AppLoadingScreen/AppLoadingScreen'
 
 function PrivateRoute({ children, adminOnly = false }) {
   const [user, setUser] = useState(null)
@@ -46,7 +47,7 @@ function PrivateRoute({ children, adminOnly = false }) {
   }, [])
 
   if (loading) {
-    return <div>Chargement...</div>
+    return <AppLoadingScreen />
   }
 
   if (!user) {
